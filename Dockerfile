@@ -22,6 +22,9 @@ WORKDIR /app
 # Copy requirements first to leverage Docker cache
 COPY requirements.txt .
 
+# Install CPU-only PyTorch to save space (avoid installing CUDA)
+RUN pip install --no-cache-dir torch>=2.2.0 --index-url https://download.pytorch.org/whl/cpu
+
 # Install python dependencies
 RUN pip install --no-cache-dir -r requirements.txt
 

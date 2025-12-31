@@ -17,9 +17,9 @@ markdown>=3.9.0
 
 # Embeddings and vector store
 sentence-transformers>=5.0.0
-torch>=2.9.0
+
 numpy>=2.3.0
-faiss-cpu>=1.12.0
+
 scikit-learn>=1.5.0
 
 # LLM providers
