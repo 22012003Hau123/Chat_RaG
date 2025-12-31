@@ -1,0 +1,14 @@
+version: '3.8'
+
+services:
+  rag-chat:
+    build: .
+    container_name: rag-chat-app
+    ports:
+      - "8000:7860"  # Map container port 7860 to host port 8000
+    env_file:
+      - .env
+    volumes:
+      - ./data:/app/data  # Persist data (optional if you want to keep data outside)
+      - ./logs:/app/logs  # Persist logs
+    restart: always

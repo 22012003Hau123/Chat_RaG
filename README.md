@@ -408,7 +408,39 @@ The **workflow principles** remain identical to standard Git Flow—only the bra
 - Conversation memory and follow-up questions
 - Cloud vector database integration
 - Docker containerization
-- Comprehensive test suite
+## Server Deployment (Ubuntu/Linux)
+
+### 1. Prerequisites (Install Docker)
+
+If you see `Command 'docker-compose' not found`, run these commands:
+
+```bash
+# Update package list
+sudo apt-get update
+
+# Install Docker
+sudo apt-get install -y docker.io
+
+# Install Docker Compose
+sudo apt-get install -y docker-compose
+
+# Start and enable Docker
+sudo systemctl start docker
+sudo systemctl enable docker
+```
+
+### 2. Deploy App
+
+After installing Docker, navigate to your project folder and run:
+
+```bash
+# Build and start in background
+docker-compose up -d --build
+```
+
+- App will run on port `8000`.
+- Logs can be viewed with: `docker-compose logs -f`
+
 
 ## Contact
 
