@@ -6,7 +6,7 @@
 
 body {
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
-    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    background: linear-gradient(135deg, #1e3a8a 0%, #0f172a 100%);
     height: 100vh;
     display: flex;
     justify-content: center;
@@ -27,7 +27,7 @@ body {
 }
 
 .chat-header {
-    background: #667eea;
+    background: #1e3a8a;
     color: white;
     padding: 20px;
     border-radius: 12px 12px 0 0;
@@ -88,7 +88,7 @@ body {
 }
 
 .message.user .message-avatar {
-    background: #667eea;
+    background: #1e3a8a;
 }
 
 .message.assistant .message-avatar {
@@ -104,7 +104,7 @@ body {
 }
 
 .message.user .message-content {
-    background: #667eea;
+    background: #1e3a8a;
     color: white;
 }
 
@@ -134,12 +134,12 @@ body {
 
 .source-number {
     font-weight: 600;
-    color: #667eea;
+    color: #1e3a8a;
     margin-right: 6px;
 }
 
 .citation-link {
-    color: #667eea;
+    color: #1e3a8a;
     font-weight: 600;
     text-decoration: none;
     padding: 0 2px;
@@ -171,12 +171,12 @@ body {
 }
 
 #questionInput:focus {
-    border-color: #667eea;
+    border-color: #1e3a8a;
 }
 
 #sendButton {
     padding: 12px 24px;
-    background: #667eea;
+    background: #1e3a8a;
     color: white;
     border: none;
     border-radius: 8px;
@@ -246,7 +246,7 @@ body {
 }
 
 .message-content a {
-    color: #667eea;
+    color: #1e3a8a;
     text-decoration: none;
 }
 
@@ -309,7 +309,7 @@ body {
 }
 
 .doc-modal-content h2 {
-    color: #667eea;
+    color: #1e3a8a;
     margin-bottom: 20px;
 }
 
@@ -327,7 +327,7 @@ body {
 }
 
 .chat-header {
-    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    background: linear-gradient(135deg, #1e3a8a 0%, #0f172a 100%);
     color: white;
     padding: 20px;
     text-align: center;
@@ -338,7 +338,7 @@ body {
 }
 .doc-download-btn {
     display: inline-block;
-    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    background: linear-gradient(135deg, #1e3a8a 0%, #0f172a 100%);
     color: white;
     padding: 12px 24px;
     border-radius: 8px;
@@ -356,7 +356,7 @@ body {
 .doc-note {
     background: #e8f4fd;
     padding: 12px;
-    border-left: 4px solid #667eea;
+    border-left: 4px solid #1e3a8a;
     border-radius: 4px;
     margin: 15px 0;
 }
@@ -387,7 +387,7 @@ body {
 
 .upload-btn {
     background: white;
-    color: #667eea;
+    color: #1e3a8a;
     border: none;
     padding: 10px 20px;
     border-radius: 8px;
@@ -440,7 +440,7 @@ body {
 }
 
 .upload-modal-content h2 {
-    color: #667eea;
+    color: #1e3a8a;
     margin-bottom: 10px;
 }
 
@@ -451,7 +451,7 @@ body {
 }
 
 .upload-area {
-    border: 2px dashed #667eea;
+    border: 2px dashed #1e3a8a;
     border-radius: 12px;
     padding: 40px;
     text-align: center;
@@ -461,7 +461,7 @@ body {
 }
 
 .upload-area:hover {
-    border-color: #764ba2;
+    border-color: #0f172a;
     background-color: #f8f9ff;
 }
 
@@ -501,7 +501,7 @@ body {
 
 .progress-fill {
     height: 100%;
-    background: linear-gradient(90deg, #667eea 0%, #764ba2 100%);
+    background: linear-gradient(90deg, #1e3a8a 0%, #0f172a 100%);
     transition: width 0.3s ease;
     width: 0%;
 }
@@ -509,13 +509,13 @@ body {
 .upload-status {
     text-align: center;
     font-size: 14px;
-    color: #667eea;
+    color: #1e3a8a;
     font-weight: 500;
 }
 
 .upload-submit-btn {
     width: 100%;
-    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    background: linear-gradient(135deg, #1e3a8a 0%, #0f172a 100%);
     color: white;
     border: none;
     padding: 14px 28px;

@@ -11,7 +11,20 @@ function addMessage(text, isUser, sources = null) {
     
     const avatar = document.createElement('div');
     avatar.className = 'message-avatar';
-    avatar.textContent = isUser ? '👤' : '🤖';
+    
+    if (isUser) {
+        avatar.textContent = '👤';
+    } else {
+        // Use custom bot avatar image
+        const botImg = document.createElement('img');
+        botImg.src = '/static/images/bot-avatar.jpeg';
+        botImg.alt = 'Bot';
+        botImg.style.width = '100%';
+        botImg.style.height = '100%';
+        botImg.style.objectFit = 'cover';
+        botImg.style.borderRadius = '50%';
+        avatar.appendChild(botImg);
+    }
     
     const content = document.createElement('div');
     content.className = 'message-content';
@@ -46,15 +59,27 @@ function addMessage(text, isUser, sources = null) {
     if (sources && sources.length > 0) {
         const sourcesDiv = document.createElement('div');
         sourcesDiv.className = 'message-sources';
+        
+        // Limit to first 2 sources
+        const maxSources = 2;
+        const displaySources = sources.slice(0, maxSources);
+        const remainingCount = sources.length - maxSources;
+        
         // Process links in sources
-        const sourceLinks = sources.map(source => {
+        const sourceLinks = displaySources.map(source => {
             const match = source.match(/\[(.*?)\]\((.*?)\)/);
             if (match) {
                 return `<a href="${match[2]}" target="_blank">${match[1]}</a>`;
             }
             return source;
         });
-        sourcesDiv.innerHTML = `Sources: ${sourceLinks.join(', ')}`;
+        
+        let sourcesText = `Sources: ${sourceLinks.join(', ')}`;
+        if (remainingCount > 0) {
+            sourcesText += ` <span style="opacity: 0.7;">+ ${remainingCount} more</span>`;
+        }
+        
+        sourcesDiv.innerHTML = sourcesText;
         content.appendChild(sourcesDiv);
     }
     
