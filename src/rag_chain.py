@@ -16,7 +16,7 @@ import yaml
 from typing import Dict, Any, List, Optional
 
 # Import our custom modules
-from src.retriever import load_vector_store, initialize_embedding_model, similarity_search, mmr_search
+from src.retriever import SupabaseRetriever
 from src.prompt import create_messages_format
 from src.configuration import resolve_config_path
 
@@ -60,11 +60,9 @@ class RAGChain:
         # Load configuration
         self.config = self._load_config(resolved_config_path)
         
-        # Load vector store and embedding model
-        print("\nLoading vector store...")
-        index_path = self.config['vector_store']['index_path']
-        self.index, self.chunks, self.stored_config = load_vector_store(index_path)
-        self.embedding_model = initialize_embedding_model(self.stored_config)
+        # Initialize Supabase retriever
+        print("\nInitializing Supabase retriever...")
+        self.retriever = SupabaseRetriever(self.config)
         
         # Initialize OpenAI client
         print("\nInitializing LLM...")
@@ -93,16 +91,6 @@ class RAGChain:
         
         This is Step 1 of the RAG pipeline: RETRIEVE
         
-        What happens here:
-        1. Convert question to embedding vector
-        2. Search FAISS index for similar documents
-        3. Return top-k most relevant chunks
-        
-        Why separate retrieve method?
-        - Can be used independently for testing
-        - Allows inspection of retrieved context
-        - Makes debugging easier
-        
         Args:
             question: User's question
             method: Search method - "similarity" or "mmr"
@@ -113,21 +101,17 @@ class RAGChain:
         k = self.retrieval_config.get('top_k', 5)
         
         if method == "similarity":
-            results = similarity_search(
+            results = self.retriever.similarity_search(
                 query=question,
-                index=self.index,
-                chunks=self.chunks,
-                model=self.embedding_model,
                 k=k
             )
         elif method == "mmr":
             lambda_mult = self.retrieval_config.get('mmr_lambda', 0.5)
-            results = mmr_search(
+            fetch_k = self.retrieval_config.get('fetch_k', 20)
+            results = self.retriever.mmr_search(
                 query=question,
-                index=self.index,
-                chunks=self.chunks,
-                model=self.embedding_model,
                 k=k,
+                fetch_k=fetch_k,
                 lambda_mult=lambda_mult
             )
         else:
@@ -137,11 +121,157 @@ class RAGChain:
         documents = [doc for doc, score in results]
         return documents
     
+    def _is_chitchat(self, question: str) -> bool:
+        """
+        Check if question is chit-chat / casual conversation (not document-related).
+        Return True for greetings, self-introduction, small talk, etc.
+        """
+        question_lower = question.lower()
+        
+        # Greetings
+        greetings = ['hello', 'hi', 'bonjour', 'salut', 'hey', 'good morning', 'good afternoon', 'coucou', 'xin chào']
+        if any(greeting in question_lower for greeting in greetings):
+            return True
+        
+        # Self-introduction / name exchange (Vietnamese)
+        intro_patterns_vn = [
+            'tên là', 'tên tôi', 'tên mình', 'bạn tên', 'tên gì',
+            'bạn là ai', 'ai vậy', 'ai đó'
+        ]
+        if any(pattern in question_lower for pattern in intro_patterns_vn):
+            return True
+        
+        # Self-introduction / name exchange (French/English)
+        intro_patterns_fr_en = [
+            'je m’appelle', 'mon nom', 'je suis', 'comment tu t’appelles',
+            'my name is', 'i am', 'what is your name', 'who are you'
+        ]
+        if any(pattern in question_lower for pattern in intro_patterns_fr_en):
+            return True
+        
+        # Small talk
+        small_talk = [
+            'comment ça va', 'ça va', 'how are you', 'khỏe không',
+            'merci', 'thank you', 'cảm ơn'
+        ]
+        if any(talk in question_lower for talk in small_talk):
+            return True
+        
+        return False
+    
+    def _extract_topic_keywords(self, history: List[Dict[str, str]], max_words: int = 5) -> str:
+        """
+        Extract main topic keywords from recent history.
+        Returns a short phrase representing the topic, not full questions.
+        
+        Args:
+            history: Recent conversation history
+            max_words: Maximum words to extract
+            
+        Returns:
+            Topic keywords string
+        """
+        if not history or len(history) == 0:
+            return ""
+        
+        # Look at last 2-3 user questions to find topic
+        user_questions = []
+        for msg in reversed(history[-6:]):  # Last 3 turns
+            if msg.get('role') == 'user':
+                user_questions.append(msg.get('content', ''))
+                if len(user_questions) >= 2:
+                    break
+        
+        if not user_questions:
+            return ""
+        
+        # Take first user question as main topic
+        # Extract key nouns/entities (simple approach: take first max_words)
+        topic_question = user_questions[-1]  # Oldest in our list = earliest question
+        words = topic_question.split()
+        
+        # Filter out common question words
+        stop_words = ['là', 'gì', 'the', 'what', 'is', 'are', 'c\'est', 'qu\'est-ce', 'quoi', 
+                      'như', 'thế', 'nào', 'how', 'why', 'when', 'where']
+        
+        keywords = [w for w in words if w.lower() not in stop_words]
+        
+        # Return first max_words keywords
+        return ' '.join(keywords[:max_words])
+    
+    def _is_followup_question(self, question: str) -> bool:
+        """
+        Detect if question is a follow-up (needs context enrichment).
+        
+        Args:
+            question: User question
+            
+        Returns:
+            True if follow-up, False if standalone
+        """
+        question_lower = question.lower()
+        
+        # Follow-up indicators
+        followup_patterns = [
+            # Vietnamese - image/content requests
+            'ảnh', 'hình', 'cho', 'thêm', 'nữa', 'hiển thị',
+            'xem', 'giải thích', 'chi tiết', 'cụ thể',
+            # French
+            'image', 'photo', 'montre', 'affiche', 'plus', 'autre',
+            'détail', 'expliquer',
+            # English  
+            'image', 'show', 'display', 'more', 'another', 'details',
+            'explain'
+        ]
+        
+        # Check if contains any follow-up pattern
+        has_pattern = any(pattern in question_lower for pattern in followup_patterns)
+        
+        # Also check if question is short (likely incomplete)
+        is_short = len(question.split()) <= 4
+        
+        return has_pattern or is_short
+    
+    def _enrich_query(self, question: str, history: Optional[List[Dict[str, str]]] = None) -> str:
+        """
+        Smart query enrichment:
+        - Extract topic keywords from recent history (not full questions)
+        - Only enrich if question is a follow-up
+        - Avoid overly long queries
+        
+        Args:
+            question: Original user question
+            history: Conversation history
+            
+        Returns:
+            Enriched query if needed, original otherwise
+        """
+        # No history = no enrichment
+        if not history or len(history) == 0:
+            return question
+        
+        # Check if this is a follow-up question
+        if not self._is_followup_question(question):
+            # Standalone question - no enrichment needed
+            return question
+        
+        # Extract topic keywords (short!)
+        topic_keywords = self._extract_topic_keywords(history, max_words=5)
+        
+        if topic_keywords:
+            # Enrich with topic keywords
+            enriched = f"{question} {topic_keywords}"
+            print(f"  🔍 Query enriched: '{question}' → '{enriched}'")
+            return enriched
+        
+        return question
+
     def query(
         self, 
         question: str, 
         method: str = "similarity",
-        return_context: bool = False
+        return_context: bool = False,
+        history: Optional[List[Dict[str, str]]] = None
     ) -> Dict[str, Any]:
         """
         Complete RAG query: Retrieve → Compose → Generate
@@ -174,14 +304,17 @@ class RAGChain:
         print(f"{'='*60}")
         print(f"Question: {question}")
         
-        # Step 1: RETRIEVE relevant documents
-        print(f"\nStep 1: Retrieving documents (method: {method})...")
-        documents = self.retrieve(question, method=method)
+        # SMART ENRICHMENT: Add context if follow-up question
+        enriched_query = self._enrich_query(question, history)
+        
+        # Retrieval with enriched query
+        print(f"\nRetrieving documents (method: {method})...")
+        documents = self.retrieve(enriched_query, method=method)
         print(f"Retrieved {len(documents)} documents")
         
         # Step 2: COMPOSE prompt with context
         print("\nStep 2: Composing prompt...")
-        messages = create_messages_format(question, documents)
+        messages = create_messages_format(question, documents, history)
         
         # Step 3: GENERATE answer using LLM
         print("\nStep 3: Generating answer...")
@@ -200,10 +333,33 @@ class RAGChain:
             print(f"Error generating answer: {e}")
             answer = f"Error: Could not generate answer. {str(e)}"
         
+        # Deduplicate sources and add Supabase links
+        unique_sources = []
+        seen_sources = set()
+        supabase_url_base = os.getenv('SUPABASE_URL')
+        
+        for doc in documents:
+            source_name = doc.metadata.get('source', 'Unknown')
+            if source_name not in seen_sources:
+                seen_sources.add(source_name)
+                
+                # Get Supabase Storage URL
+                storage_path = doc.metadata.get('storage_path')
+                if storage_path:
+                    # Use existing storage_path from metadata
+                    file_url = f"{supabase_url_base}/storage/v1/object/public/source-documents/{storage_path}"
+                else:
+                    # Construct URL from source filename
+                    # Assume files are in source-documents bucket
+                    file_url = f"{supabase_url_base}/storage/v1/object/public/source-documents/{source_name}"
+                
+                # Create markdown link format: [name](url)
+                unique_sources.append(f"[{source_name}]({file_url})")
+        
         # Prepare response
         result = {
             "answer": answer,
-            "sources": [doc.metadata.get('source', 'Unknown') for doc in documents]
+            "sources": unique_sources
         }
         
         if return_context:

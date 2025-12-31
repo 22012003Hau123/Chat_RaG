@@ -14,8 +14,8 @@ document:
 
 # Embedding Model Configuration  
 embeddings:
-  model: "sentence-transformers/all-MiniLM-L6-v2"  # Fast, good quality embeddings
-  dimension: 384                # Vector dimension (depends on model)
+  model: "text-embedding-3-small"  # OpenAI embedding model
+  dimension: 1536               # Vector dimension (must match database)
   batch_size: 32               # Process chunks in batches for efficiency
 
 # Vector Store Settings

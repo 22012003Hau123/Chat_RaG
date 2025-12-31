@@ -13,6 +13,8 @@ Usage:
 """
 
 import os
+import tempfile
+import subprocess
 from typing import Dict, Any, Optional
 from contextlib import asynccontextmanager
 from dotenv import load_dotenv
@@ -21,7 +23,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # FastAPI imports
-from fastapi import FastAPI, HTTPException, Request  # type: ignore
+from fastapi import FastAPI, HTTPException, Request, UploadFile, File  # type: ignore
 from fastapi.responses import HTMLResponse  # type: ignore
 from fastapi.staticfiles import StaticFiles  # type: ignore
 from fastapi.templating import Jinja2Templates  # type: ignore
@@ -100,7 +102,8 @@ class QuestionRequest(BaseModel):
     """Request model for asking questions."""
     question: str
     method: str = "similarity"
-    
+    history: Optional[list[Dict[str, str]]] = None
+
 
 class AnswerResponse(BaseModel):
     """Response model for answers."""
@@ -163,10 +166,16 @@ async def ask_question(request: QuestionRequest):
             detail="RAG system not initialized. Please check logs."
         )
     
+    # Process history
+    history_ctx = request.history or []
+    print(f"\n📝 Received request: '{request.question}'")
+    print(f"📚 History context: {len(history_ctx)} messages")
+    
     try:
         result = rag_chain.query(
             question=request.question,
-            method=request.method
+            method=request.method,
+            history=history_ctx
         )
         
         return AnswerResponse(
@@ -181,6 +190,88 @@ async def ask_question(request: QuestionRequest):
             status_code=500,
             detail=f"Error processing question: {str(e)}"
         )
+
+
+@app.post("/upload")
+async def upload_document(file: UploadFile = File(...)):
+    """
+    Upload and process a document.
+    
+    Accepts PDF, DOCX, PPTX files, processes them using ingest_single_file.py,
+    and adds chunks to the vector database.
+    """
+    if not rag_chain:
+        raise HTTPException(status_code=503, detail="RAG system not initialized")
+    
+    # Validate file type
+    allowed_extensions = ['.pdf', '.docx', '.pptx']
+    file_ext = os.path.splitext(file.filename)[1].lower()
+    
+    if file_ext not in allowed_extensions:
+        raise HTTPException(
+            status_code=400, 
+            detail=f"Unsupported file type: {file_ext}. Allowed: {', '.join(allowed_extensions)}"
+        )
+    
+    # Create temp file
+    temp_file = None
+    try:
+        # Save uploaded file to temporary location
+        with tempfile.NamedTemporaryFile(delete=False, suffix=file_ext) as temp:
+            content = await file.read()
+            temp.write(content)
+            temp_file = temp.name
+        
+        print(f"\n{'='*60}")
+        print(f"PROCESSING UPLOAD: {file.filename}")
+        print(f"Temp file: {temp_file}")
+        print(f"{'='*60}\n")
+        
+        # Run ingestion script
+        result = subprocess.run(
+            ['python', 'ingest_single_file.py', '--file', temp_file],
+            cwd=os.path.dirname(os.path.abspath(__file__)),
+            capture_output=True,
+            text=True,
+            timeout=300  # 5 minute timeout
+        )
+        
+        if result.returncode != 0:
+            error_msg = result.stderr or "Processing failed"
+            print(f"❌ Ingestion failed: {error_msg}")
+            raise HTTPException(status_code=500, detail=f"Document processing failed: {error_msg}")
+        
+        # Parse output to get chunk count
+        output = result.stdout
+        chunks_created = 0
+        for line in output.split('\n'):
+            if 'Created' in line and 'chunks' in line:
+                try:
+                    chunks_created = int(line.split('Created')[1].split('chunks')[0].strip())
+                except:
+                    pass
+        
+        print(f"✅ Document processed successfully: {chunks_created} chunks created\n")
+        
+        return {
+            "success": True,
+            "filename": file.filename,
+            "chunks_created": chunks_created,
+            "message": "Document uploaded and processed successfully"
+        }
+        
+    except subprocess.TimeoutExpired:
+        raise HTTPException(status_code=500, detail="Processing timeout - file too large")
+    except Exception as e:
+        print(f"❌ Upload error: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        # Clean up temp file
+        if temp_file and os.path.exists(temp_file):
+            try:
+                os.unlink(temp_file)
+            except Exception as e:
+                print(f"Warning: Could not delete temp file {temp_file}: {e}")
 
 
 @app.get("/chat", response_class=HTMLResponse)

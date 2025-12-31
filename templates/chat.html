@@ -4,22 +4,23 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>RAG Chatbot</title>
-    <link rel="stylesheet" href="/static/css/style.css">
+    <link rel="stylesheet" href="/static/css/style.css?v=2">
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
 </head>
 <body>
     <div class="chat-container">
         <div class="chat-header">
-            <h1>RAG Chatbot</h1>
-            <p>Ask questions about your documents</p>
+            <div>
+                <h1>RAG Chatbot</h1>
+                <p>Ask questions about your documents</p>
+            </div>
+            <button id="uploadBtn" class="upload-btn" onclick="openUploadModal()">
+                ➕ Add Document
+            </button>
         </div>
         
         <div class="chat-messages" id="chatMessages">
-            <div class="message assistant">
-                <div class="message-avatar">🤖</div>
-                <div class="message-content">
-                    Hello! I'm your RAG chatbot. Ask me anything about the documents in the knowledge base.
-                </div>
-            </div>
+            <!-- Messages will be added here dynamically -->
         </div>
         
         <div class="chat-input-container">
@@ -33,6 +34,39 @@
         </div>
     </div>
     
-    <script src="/static/js/chat.js"></script>
+    <!-- Upload Modal -->
+    <div id="uploadModal" class="upload-modal" style="display: none;">
+        <div class="upload-modal-content">
+            <span class="upload-modal-close" onclick="closeUploadModal()">&times;</span>
+            <h2>📤 Upload Document</h2>
+            <p class="upload-hint">Supported formats: PDF, DOCX, PPTX (max 50MB)</p>
+            
+            <div class="upload-area" id="uploadArea">
+                <input type="file" id="fileInput" accept=".pdf,.docx,.pptx" onchange="handleFileSelect(event)" style="display: none;">
+                <div class="upload-placeholder" onclick="document.getElementById('fileInput').click()">
+                    <div class="upload-icon">📁</div>
+                    <p>Click to select a file or drag and drop</p>
+                </div>
+            </div>
+            
+            <div id="fileInfo" class="file-info" style="display: none;">
+                <p><strong>Selected:</strong> <span id="fileName"></span></p>
+                <p><strong>Size:</strong> <span id="fileSize"></span></p>
+            </div>
+            
+            <div class="progress-container" id="progressContainer" style="display: none;">
+                <div class="progress-bar">
+                    <div class="progress-fill" id="progressFill"></div>
+                </div>
+                <p class="upload-status" id="uploadStatus"></p>
+            </div>
+            
+            <button id="uploadButton" class="upload-submit-btn" onclick="uploadFile()" disabled>
+                Upload Document
+            </button>
+        </div>
+    </div>
+    
+    <script src="/static/js/chat.js?v=4"></script>
 </body>
 </html>
