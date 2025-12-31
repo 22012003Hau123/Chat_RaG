@@ -49,4 +49,4 @@ pdf2image>=1.16.0
 pytesseract>=0.3.10
 
 # Document conversion (for DOCX → PDF)
-python-docx-template>=0.16.0  # Fallback if LibreOffice not available
+
