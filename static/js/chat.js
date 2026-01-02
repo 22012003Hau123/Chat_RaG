@@ -139,7 +139,7 @@ async function sendMessage() {
             },
             body: JSON.stringify({
                 question: question,
-                method: 'similarity',
+                method: 'mmr',  // MMR for diverse, comprehensive answers
                 session_id: sessionId  // Send session ID instead of history
             })
         });

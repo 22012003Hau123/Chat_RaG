@@ -18,18 +18,13 @@ embeddings:
   dimension: 1536               # Vector dimension (must match database)
   batch_size: 32               # Process chunks in batches for efficiency
 
-# Vector Store Settings
-vector_store:
-  type: "faiss"                # Legacy field - now using Supabase
-  index_path: "./data/vector_index"  # Where to save the index
-  similarity_metric: "cosine"   # How to measure similarity
-
 # Retrieval Configuration
 retrieval:
   top_k: 5                     # Number of documents to retrieve
   score_threshold: 0.7         # Minimum similarity score (0-1)
-  search_type: "similarity"    # Options: "similarity", "mmr", "hybrid"
-  mmr_lambda: 0.7             # MMR diversity vs relevance (0=max diversity, 1=max relevance)
+  search_type: "mmr"           # Using MMR for diverse results
+  mmr_lambda: 0.65             # 65% relevance, 35% diversity (optimized for technical docs)
+  fetch_k: 20                  # Fetch 20 candidates for MMR selection
 
 # Language Model Settings
 llm:
@@ -47,13 +42,13 @@ api:
     - "http://localhost:8080"
 
 # Evaluation Settings
-evaluation:
-  metrics:                    # Metrics to calculate
-    - "answer_relevancy"
-    - "context_relevancy" 
-    - "groundedness"
-    - "faithfulness"
-  test_data_path: "./data/eval_qa_pairs.json"
+# evaluation:
+#   metrics:                    # Metrics to calculate
+#     - "answer_relevancy"
+#     - "context_relevancy" 
+#     - "groundedness"
+#     - "faithfulness"
+#   test_data_path: "./data/eval_qa_pairs.json"
 
 # Logging Configuration
 logging:

@@ -408,8 +408,7 @@ class RAGChain:
         question: str, 
         method: str = "similarity",
         return_context: bool = False,
-        session: Optional['ConversationSession'] = None,  # NEW: Session-based memory
-        history: Optional[List[Dict[str, str]]] = None  # DEPRECATED: Fallback for compatibility
+        session: Optional['ConversationSession'] = None
     ) -> Dict[str, Any]:
         """
         Complete RAG query: Retrieve → Compose → Generate
@@ -418,13 +417,12 @@ class RAGChain:
         - Uses session memory for automatic conversation summarization
         - Extracts entities from LLM-generated summaries
         - More efficient token usage
-        
+         
         Args:
             question: User's question
             method: Retrieval method - "similarity" or "mmr"
             return_context: If True, include retrieved documents in response
-            session: ConversationSession with memory (preferred)
-            history: Raw history list (deprecated, for backward compatibility)
+            session: ConversationSession with chat history memory
             
         Returns:
             Dictionary with:
@@ -437,11 +435,10 @@ class RAGChain:
         print(f"{'='*60}")
         print(f"Question: {question}")
         
-        # Extract context from session memory or fallback to raw history
+        # Extract context from session memory
         if session:
             print(f"🧠 Using session memory")
             memory_context = session.get_context()
-            # memory_context contains: {'chat_history': [messages]} and possibly 'summary'
             
             # Convert memory messages to history format for enrichment
             history_for_enrichment = []
@@ -450,20 +447,8 @@ class RAGChain:
                     role = 'user' if hasattr(msg, 'type') and msg.type == 'human' else 'assistant'
                     content = msg.content if hasattr(msg, 'content') else str(msg)
                     history_for_enrichment.append({'role': role, 'content': content})
-            
-            # Add summary as synthetic history if available
-            if 'summary' in memory_context and memory_context['summary']:
-                print(f"📋 Memory summary available: {len(memory_context['summary'])} chars")
-                # Prepend summary as a system message for context
-                history_for_enrichment.insert(0, {
-                    'role': 'assistant', 
-                    'content': f"Previous conversation summary: {memory_context['summary']}"
-                })
-        elif history:
-            print(f"📚 Using raw history ({len(history)} messages)")
-            history_for_enrichment = history
         else:
-            print(f"ℹ️  No conversation history")
+            print(f"ℹ️  No session - standalone question")
             history_for_enrichment = []
         
         # SMART ENRICHMENT: Add context if follow-up question
