@@ -33,10 +33,12 @@ from pydantic import BaseModel
 # Our RAG system
 from src.rag_chain import RAGChain
 from src.configuration import resolve_config_path
+from src.session_manager import SessionManager
 
 
-# Global variable to hold RAG chain instance
+# Global variables to hold RAG chain and session manager
 rag_chain: Optional[RAGChain] = None
+session_manager: Optional[SessionManager] = None
 
 
 @asynccontextmanager
@@ -45,7 +47,7 @@ async def lifespan(app: FastAPI):
     Lifespan context manager for FastAPI.
     Initializes RAG chain on startup and cleans up on shutdown.
     """
-    global rag_chain
+    global rag_chain, session_manager
     
     # Startup: Initialize RAG chain
     print("\n" + "="*60)
@@ -56,6 +58,13 @@ async def lifespan(app: FastAPI):
         config_path = resolve_config_path()
         print(f"Using configuration: {config_path}")
         rag_chain = RAGChain(config_path=config_path)
+        
+        # Initialize SessionManager
+        print("\nInitializing Session Manager...")
+        session_manager = SessionManager(
+            cleanup_interval_minutes=10
+        )
+        
         print("\nRAG system ready!")
     except Exception as e:
         print(f"\nError initializing RAG system: {e}")
@@ -102,7 +111,7 @@ class QuestionRequest(BaseModel):
     """Request model for asking questions."""
     question: str
     method: str = "similarity"
-    history: Optional[list[Dict[str, str]]] = None
+    session_id: Optional[str] = None  # Frontend-generated UUID
 
 
 class AnswerResponse(BaseModel):
@@ -110,6 +119,7 @@ class AnswerResponse(BaseModel):
     answer: str
     sources: list[str]
     method_used: str
+    session_id: str  # Return session_id to frontend
 
 
 # ============================================================================
@@ -155,33 +165,40 @@ async def health_check():
 @app.post("/ask", response_model=AnswerResponse)
 async def ask_question(request: QuestionRequest):
     """
-    Main question-answering endpoint using RAG.
+    Main question-answering endpoint using RAG with session management.
     
     Retrieves relevant documents and generates answers using LLM.
-    Returns answer with source references.
+    Uses ConversationSummaryBufferMemory for efficient context management.
+    Returns answer with source references and session_id.
     """
-    if rag_chain is None:
+    if rag_chain is None or session_manager is None:
         raise HTTPException(
             status_code=503,
             detail="RAG system not initialized. Please check logs."
         )
     
-    # Process history
-    history_ctx = request.history or []
+    # Generate session ID if not provided
+    import uuid
+    session_id = request.session_id or str(uuid.uuid4())
+    
     print(f"\n📝 Received request: '{request.question}'")
-    print(f"📚 History context: {len(history_ctx)} messages")
+    print(f"🆔 Session ID: {session_id[:8]}...")
+    
+    # Get or create session
+    session = session_manager.get_or_create_session(session_id)
     
     try:
         result = rag_chain.query(
             question=request.question,
             method=request.method,
-            history=history_ctx
+            session=session  # Pass session instead of history
         )
         
         return AnswerResponse(
             answer=result["answer"],
             sources=result["sources"],
-            method_used=request.method
+            method_used=request.method,
+            session_id=session_id
         )
         
     except Exception as e:

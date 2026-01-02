@@ -1,9 +1,37 @@
+// DOM elements
 const chatMessages = document.getElementById('chatMessages');
 const questionInput = document.getElementById('questionInput');
 const sendButton = document.getElementById('sendButton');
 
-// Global history array
-let messageHistory = [];
+// Generate UUID for session ID
+function generateUUID() {
+    return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
+        const r = Math.random() * 16 | 0;
+        const v = c === 'x' ? r : (r & 0x3 | 0x8);
+        return v.toString(16);
+    });
+}
+
+// Session management
+let sessionId = localStorage.getItem('chat_session_id');
+if (!sessionId) {
+    sessionId = generateUUID();
+    localStorage.setItem('chat_session_id', sessionId);
+    console.log('🆔 New session created:', sessionId);
+} else {
+    console.log('🆔 Existing session loaded:', sessionId);
+}
+
+// Function to reset session (for new conversation)
+function resetSession() {
+    sessionId = generateUUID();
+    localStorage.setItem('chat_session_id', sessionId);
+    console.log('🔄 Session reset:', sessionId);
+    // Clear chat UI
+    chatMessages.innerHTML = '';
+    // Re-add greeting
+    addMessage("Bonjour! Je suis votre assistant IA pour les documents Auchan. Comment puis-je vous aider ?", false);
+}
 
 function addMessage(text, isUser, sources = null) {
     const messageDiv = document.createElement('div');
@@ -88,12 +116,6 @@ function addMessage(text, isUser, sources = null) {
     chatMessages.appendChild(messageDiv);
     
     chatMessages.scrollTop = chatMessages.scrollHeight;
-    
-    // Add to history
-    messageHistory.push({
-        role: isUser ? "user" : "assistant",
-        content: text
-    });
 }
 
 async function sendMessage() {
@@ -118,7 +140,7 @@ async function sendMessage() {
             body: JSON.stringify({
                 question: question,
                 method: 'similarity',
-                history: messageHistory.slice(0, -1) // Send previous history only
+                session_id: sessionId  // Send session ID instead of history
             })
         });
         
@@ -127,6 +149,13 @@ async function sendMessage() {
         }
         
         const data = await response.json();
+        
+        // Update session ID from response (in case backend generated new one)
+        if (data.session_id) {
+            sessionId = data.session_id;
+            localStorage.setItem('chat_session_id', sessionId);
+        }
+        
         addMessage(data.answer, false, data.sources);
         
     } catch (error) {

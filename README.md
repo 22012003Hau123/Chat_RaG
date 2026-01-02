@@ -30,7 +30,7 @@ rag-chatbot-demo/
 ├── configs/
 │   └── rag.yaml              # System configuration
 ├── data/                     # Document storage
-│   └── vector_index/         # FAISS index and metadata
+│   └── vector_index/         # (Legacy - now using Supabase)
 ├── docs/
 │   └── CREDENTIALS.md        # Credential management guide
 ├── envs/                     # Environment credential files (gitignored)
@@ -140,7 +140,7 @@ This process:
 - Loads documents from the specified directory
 - Splits text into chunks with configured size and overlap
 - Generates embeddings using the configured model
-- Creates a FAISS vector index for similarity search
+- Uploads documents to Supabase vector database for similarity search
 
 ### Running the Application
 
@@ -194,7 +194,7 @@ python src/rag_chain.py --question "What is RAG?" --show-context
 ```
 Documents → Ingest → Vector DB → Retriever → RAG Chain → Response
              ↓          ↓           ↓           ↓
-           Split     FAISS     Similarity   LLM + Context
+           Split    Supabase   Similarity   LLM + Context
           Embed     Index       Search      Generation
 ```
 
@@ -206,7 +206,7 @@ Documents → Ingest → Vector DB → Retriever → RAG Chain → Response
   - Multi-format document loading
   - Text chunking with overlap
   - Batch embedding generation
-  - FAISS vector index creation
+  - Supabase vector database insertion
 - ✅ Retrieval system (`src/retriever.py`)
   - Similarity search (top-k)
   - MMR (Maximal Marginal Relevance)
@@ -249,7 +249,7 @@ Documents → Ingest → Vector DB → Retriever → RAG Chain → Response
 - Batch size: 32
 
 ### Vector Store
-- Implementation: FAISS (Facebook AI Similarity Search)
+- Implementation: Supabase (PostgreSQL with pgvector extension)
 - Similarity metric: Cosine similarity
 - Storage: Local filesystem
 
@@ -396,7 +396,7 @@ The **workflow principles** remain identical to standard Git Flow—only the bra
 
 - [LangChain Documentation](https://python.langchain.com/)
 - [Sentence Transformers](https://www.sbert.net/)
-- [FAISS](https://github.com/facebookresearch/faiss)
+- [Supabase](https://supabase.com) - Vector database
 - [FastAPI](https://fastapi.tiangolo.com/)
 - [RAG Papers and Research](https://arxiv.org/abs/2005.11401)
 

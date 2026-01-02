@@ -20,7 +20,7 @@ embeddings:
 
 # Vector Store Settings
 vector_store:
-  type: "faiss"                # Vector database type
+  type: "faiss"                # Legacy field - now using Supabase
   index_path: "./data/vector_index"  # Where to save the index
   similarity_metric: "cosine"   # How to measure similarity
 

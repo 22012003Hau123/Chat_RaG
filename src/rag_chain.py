@@ -13,7 +13,10 @@ Usage:
 
 import os
 import yaml
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List, Optional, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from src.session_manager import ConversationSession
 
 # Import our custom modules
 from src.retriever import SupabaseRetriever
@@ -32,9 +35,10 @@ class RAGChain:
     Complete RAG pipeline that integrates retrieval and generation.
     
     The RAG Chain combines:
-    - Document retrieval (from FAISS)
+    - Document retrieval (from Supabase vector database)
     - Prompt engineering (context injection)
     - LLM generation (OpenAI)
+    - Session-based memory for conversation context
     
     This is the "brain" of the RAG system.
     """
@@ -45,7 +49,7 @@ class RAGChain:
         
         What happens during initialization:
         1. Load configuration
-        2. Load FAISS vector store
+        2. Initialize Supabase retriever and embeddings
         3. Initialize embedding model
         4. Initialize OpenAI client
         
@@ -162,21 +166,108 @@ class RAGChain:
     def _extract_topic_keywords(self, history: List[Dict[str, str]], max_words: int = 5) -> str:
         """
         Extract main topic keywords from recent history.
-        Returns a short phrase representing the topic, not full questions.
+        
+        NEW APPROACH:
+        - Extract from BOTH user questions AND bot responses
+        - Prioritize proper nouns (capitalized words like "Lucid", "iPhone")
+        - Use simple NER to identify entities
         
         Args:
             history: Recent conversation history
             max_words: Maximum words to extract
             
         Returns:
-            Topic keywords string
+            Topic keywords string (entity names)
         """
         if not history or len(history) == 0:
             return ""
         
-        # Look at last 2-3 user questions to find topic
+        # Strategy 1: Extract proper nouns (entities) from recent bot responses
+        # Bot responses usually contain the actual entity names clearly
+        entities = []
+        
+        # Look at last 3 turns (6 messages)
+        for msg in reversed(history[-6:]):
+            content = msg.get('content', '')
+            words = content.split()
+            
+            # Extract capitalized words (proper nouns) - simple NER
+            for word in words:
+                # Clean word of punctuation
+                cleaned = word.strip('.,!?:;()[]{}"\'')
+                
+                # Check if it's a proper noun:
+                # - Starts with capital letter
+                # - Length > 2 (avoid "Le", "La", etc.)
+                # - Not common French/English/Vietnamese articles/phrases
+                # - Not common French connectors/sentence starters
+                excluded_words = [
+                    # Articles
+                    'The', 'Les', 'Une', 'Des', 'Một', 'Các', 
+                    # Prepositions
+                    'Pour', 'Dans', 'Avec', 'Sans', 'Sous', 'Sur',
+                    # Common French connectors/phrases (CRITICAL!)
+                    "D'après", "Selon", "Voici", "Voilà", "Cependant", 
+                    "Toutefois", "Néanmoins", "Ainsi", "Donc", "Ensuite",
+                    # Sentence starters
+                    "Bonjour", "Merci", "Désolé", "Pardon",
+                    # Common Vietnamese starters
+                    "Xin", "Cảm", "Chào"
+                ]
+                
+                if (cleaned and 
+                    cleaned[0].isupper() and 
+                    len(cleaned) > 2 and
+                    cleaned not in excluded_words and
+                    not cleaned.startswith("D'") and  # Filter D'après, D'autre, etc.
+                    not cleaned.startswith("L'") and  # Filter L'application, etc.
+                    not cleaned.endswith("...")):     # Filter incomplete text
+                    entities.append(cleaned)
+            
+            # Stop if we have enough entities
+            if len(entities) >= 3:
+                break
+        
+        # Remove duplicates while preserving order (most recent first)
+        seen = set()
+        unique_entities = []
+        for entity in entities:
+            if entity.lower() not in seen:
+                seen.add(entity.lower())
+                unique_entities.append(entity)
+        
+        # SMART PRIORITIZATION: Match entities with user questions
+        if unique_entities:
+            # Get recent user questions to match against
+            user_questions = []
+            for msg in reversed(history[-6:]):
+                if msg.get('role') == 'user':
+                    user_questions.append(msg.get('content', '').lower())
+                    if len(user_questions) >= 2:
+                        break
+            
+            # Find entities that appear in user questions (highest priority)
+            matched_entities = []
+            for entity in unique_entities:
+                entity_lower = entity.lower()
+                for question in user_questions:
+                    if entity_lower in question:
+                        matched_entities.append(entity)
+                        break
+            
+            # Use matched entity if found, otherwise use first extracted entity
+            if matched_entities:
+                main_entity = matched_entities[0]
+                print(f"  🎯 Extracted topic entity from history (matched with user question): '{main_entity}'")
+            else:
+                main_entity = unique_entities[0]
+                print(f"  🎯 Extracted topic entity from history: '{main_entity}'")
+            
+            return main_entity
+        
+        # Fallback: Extract from user questions (old logic)
         user_questions = []
-        for msg in reversed(history[-6:]):  # Last 3 turns
+        for msg in reversed(history[-6:]):
             if msg.get('role') == 'user':
                 user_questions.append(msg.get('content', ''))
                 if len(user_questions) >= 2:
@@ -185,23 +276,32 @@ class RAGChain:
         if not user_questions:
             return ""
         
-        # Take first user question as main topic
-        # Extract key nouns/entities (simple approach: take first max_words)
-        topic_question = user_questions[-1]  # Oldest in our list = earliest question
+        # Take first user question and extract keywords
+        topic_question = user_questions[-1]
         words = topic_question.split()
         
-        # Filter out common question words
+        # Filter stop words
         stop_words = ['là', 'gì', 'the', 'what', 'is', 'are', 'c\'est', 'qu\'est-ce', 'quoi', 
-                      'như', 'thế', 'nào', 'how', 'why', 'when', 'where']
+                      'như', 'thế', 'nào', 'how', 'why', 'when', 'where', 'về', 'của', 'cho',
+                      'et', 'de', 'à', 'un', 'une', 'le', 'la']
         
         keywords = [w for w in words if w.lower() not in stop_words]
         
-        # Return first max_words keywords
-        return ' '.join(keywords[:max_words])
+        if keywords:
+            result = ' '.join(keywords[:max_words])
+            print(f"  🎯 Extracted topic keywords (fallback): '{result}'")
+            return result
+        
+        return ""
     
     def _is_followup_question(self, question: str) -> bool:
         """
         Detect if question is a follow-up (needs context enrichment).
+        
+        ENHANCED DETECTION:
+        - More follow-up patterns
+        - Check for pronouns ("it", "nó", "that")
+        - Detect vague questions without clear subject
         
         Args:
             question: User question
@@ -210,41 +310,64 @@ class RAGChain:
             True if follow-up, False if standalone
         """
         question_lower = question.lower()
+        words = question.split()
         
-        # Follow-up indicators
+        # Follow-up indicators - EXPANDED
         followup_patterns = [
             # Vietnamese - image/content requests
             'ảnh', 'hình', 'cho', 'thêm', 'nữa', 'hiển thị',
-            'xem', 'giải thích', 'chi tiết', 'cụ thể',
+            'xem', 'giải thích', 'chi tiết', 'cụ thể', 'minh họa',
+            # Vietnamese pronouns/demonstratives
+            'nó', 'cái đó', 'cái này', 'đó', 'này',
             # French
             'image', 'photo', 'montre', 'affiche', 'plus', 'autre',
-            'détail', 'expliquer',
+            'détail', 'expliquer', 'illustration',
+            # French pronouns
+            'ça', 'cela', 'celui', 'celle',
             # English  
             'image', 'show', 'display', 'more', 'another', 'details',
-            'explain'
+            'explain', 'illustration',
+            # English pronouns
+            'it', 'this', 'that', 'them', 'those'
         ]
         
         # Check if contains any follow-up pattern
         has_pattern = any(pattern in question_lower for pattern in followup_patterns)
         
-        # Also check if question is short (likely incomplete)
-        is_short = len(question.split()) <= 4
+        # Check if question is very short (< 3 words = likely incomplete)
+        is_very_short = len(words) < 3
         
-        return has_pattern or is_short
+        # Check if question is short and vague (< 5 words, no proper nouns)
+        is_short_vague = False
+        if len(words) <= 4:
+            # No capitalized words = no clear subject
+            has_entity = any(word[0].isupper() for word in words if len(word) > 0)
+            is_short_vague = not has_entity
+        
+        # Detect questions starting with action verbs (command-like)
+        action_starters = ['cho', 'show', 'montre', 'affiche', 'display', 'give', 'tell']
+        starts_with_action = any(question_lower.startswith(verb) for verb in action_starters)
+        
+        return has_pattern or is_very_short or is_short_vague or starts_with_action
     
     def _enrich_query(self, question: str, history: Optional[List[Dict[str, str]]] = None) -> str:
         """
         Smart query enrichment:
-        - Extract topic keywords from recent history (not full questions)
-        - Only enrich if question is a follow-up
-        - Avoid overly long queries
+        - Extract topic entity from recent history
+        - ALWAYS enrich if follow-up question detected
+        - Add entity context to help retrieval
+        
+        IMPROVED STRATEGY:
+        - If follow-up detected → extract main entity from history
+        - Format as "{question} về {entity}" or "{question} {entity}"
+        - This helps retrieval find the right documents even with vague questions
         
         Args:
             question: Original user question
             history: Conversation history
             
         Returns:
-            Enriched query if needed, original otherwise
+            Enriched query if follow-up, original otherwise
         """
         # No history = no enrichment
         if not history or len(history) == 0:
@@ -253,16 +376,30 @@ class RAGChain:
         # Check if this is a follow-up question
         if not self._is_followup_question(question):
             # Standalone question - no enrichment needed
+            print(f"  ✓ Standalone question, no enrichment needed")
             return question
         
-        # Extract topic keywords (short!)
-        topic_keywords = self._extract_topic_keywords(history, max_words=5)
+        # Extract topic entity from history
+        topic_entity = self._extract_topic_keywords(history, max_words=5)
         
-        if topic_keywords:
-            # Enrich with topic keywords
-            enriched = f"{question} {topic_keywords}"
+        if topic_entity:
+            # Smart formatting based on language
+            question_lower = question.lower()
+            
+            # If question already contains "về" or similar, just append
+            if any(prep in question_lower for prep in ['về', 'de', 'about', 'of']):
+                enriched = f"{question} {topic_entity}"
+            # Otherwise, add "về" for Vietnamese, nothing for others
+            elif any(vn_word in question_lower for vn_word in ['ảnh', 'hình', 'cho', 'xem']):
+                enriched = f"{question} về {topic_entity}"
+            else:
+                # Default: just append
+                enriched = f"{question} {topic_entity}"
+            
             print(f"  🔍 Query enriched: '{question}' → '{enriched}'")
             return enriched
+        else:
+            print(f"  ⚠️  Follow-up detected but no topic entity found in history")
         
         return question
 
@@ -271,32 +408,28 @@ class RAGChain:
         question: str, 
         method: str = "similarity",
         return_context: bool = False,
-        history: Optional[List[Dict[str, str]]] = None
+        session: Optional['ConversationSession'] = None,  # NEW: Session-based memory
+        history: Optional[List[Dict[str, str]]] = None  # DEPRECATED: Fallback for compatibility
     ) -> Dict[str, Any]:
         """
         Complete RAG query: Retrieve → Compose → Generate
         
-        This is the full RAG pipeline in action:
-        
-        Step 1 - RETRIEVE: Get relevant documents from vector store
-        Step 2 - COMPOSE: Format documents into prompt with question
-        Step 3 - GENERATE: Send to LLM and get answer
-        
-        Why RAG works:
-        - LLM gets specific, relevant context
-        - Reduces hallucination (LLM can't make stuff up)
-        - Answer is grounded in your documents
-        - Can cite sources in the response
+        Now with ConversationSummaryBufferMemory support:
+        - Uses session memory for automatic conversation summarization
+        - Extracts entities from LLM-generated summaries
+        - More efficient token usage
         
         Args:
             question: User's question
             method: Retrieval method - "similarity" or "mmr"
             return_context: If True, include retrieved documents in response
+            session: ConversationSession with memory (preferred)
+            history: Raw history list (deprecated, for backward compatibility)
             
         Returns:
             Dictionary with:
             - answer: LLM's response
-            - sources: List of source documents (optional)
+            - sources: List of source documents
             - context: Retrieved documents (if return_context=True)
         """
         print(f"\n{'='*60}")
@@ -304,8 +437,37 @@ class RAGChain:
         print(f"{'='*60}")
         print(f"Question: {question}")
         
+        # Extract context from session memory or fallback to raw history
+        if session:
+            print(f"🧠 Using session memory")
+            memory_context = session.get_context()
+            # memory_context contains: {'chat_history': [messages]} and possibly 'summary'
+            
+            # Convert memory messages to history format for enrichment
+            history_for_enrichment = []
+            if 'chat_history' in memory_context:
+                for msg in memory_context['chat_history']:
+                    role = 'user' if hasattr(msg, 'type') and msg.type == 'human' else 'assistant'
+                    content = msg.content if hasattr(msg, 'content') else str(msg)
+                    history_for_enrichment.append({'role': role, 'content': content})
+            
+            # Add summary as synthetic history if available
+            if 'summary' in memory_context and memory_context['summary']:
+                print(f"📋 Memory summary available: {len(memory_context['summary'])} chars")
+                # Prepend summary as a system message for context
+                history_for_enrichment.insert(0, {
+                    'role': 'assistant', 
+                    'content': f"Previous conversation summary: {memory_context['summary']}"
+                })
+        elif history:
+            print(f"📚 Using raw history ({len(history)} messages)")
+            history_for_enrichment = history
+        else:
+            print(f"ℹ️  No conversation history")
+            history_for_enrichment = []
+        
         # SMART ENRICHMENT: Add context if follow-up question
-        enriched_query = self._enrich_query(question, history)
+        enriched_query = self._enrich_query(question, history_for_enrichment)
         
         # Retrieval with enriched query
         print(f"\nRetrieving documents (method: {method})...")
@@ -314,7 +476,7 @@ class RAGChain:
         
         # Step 2: COMPOSE prompt with context
         print("\nStep 2: Composing prompt...")
-        messages = create_messages_format(question, documents, history)
+        messages = create_messages_format(question, documents, history_for_enrichment)
         
         # Step 3: GENERATE answer using LLM
         print("\nStep 3: Generating answer...")
@@ -328,6 +490,11 @@ class RAGChain:
             
             answer = response.choices[0].message.content
             print("Answer generated successfully!")
+            
+            # Update session memory if using sessions
+            if session:
+                print("💾 Updating session memory...")
+                session.add_exchange(question, answer)
             
         except Exception as e:
             print(f"Error generating answer: {e}")
