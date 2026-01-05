@@ -23,7 +23,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # FastAPI imports
-from fastapi import FastAPI, HTTPException, Request, UploadFile, File  # type: ignore
+from fastapi import FastAPI, HTTPException, Request, UploadFile, File, Form  # type: ignore
 from fastapi.responses import HTMLResponse  # type: ignore
 from fastapi.staticfiles import StaticFiles  # type: ignore
 from fastapi.templating import Jinja2Templates  # type: ignore
@@ -162,13 +162,39 @@ async def health_check():
     }
 
 
-@app.post("/ask", response_model=AnswerResponse)
-async def ask_question(request: QuestionRequest):
+# Helper function for file type detection
+def _detect_file_type(filename: str) -> str:
     """
-    Main question-answering endpoint using RAG with session management.
+    Determine file type from filename extension.
     
-    Retrieves relevant documents and generates answers using LLM.
-    Uses ConversationSummaryBufferMemory for efficient context management.
+    Returns: 'image', 'pdf', or 'unknown'
+    """
+    import os
+    ext = os.path.splitext(filename)[1].lower()
+    
+    if ext in ['.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp']:
+        return 'image'
+    elif ext == '.pdf':
+        return 'pdf'
+    else:
+        return 'unknown'
+
+
+@app.post("/ask", response_model=AnswerResponse)
+async def ask_question(
+    question: str = Form(...),
+    image: Optional[UploadFile] = File(None),
+    method: str = Form("mmr"),
+    session_id: Optional[str] = Form(None)
+):
+    """
+    Main question-answering endpoint using RAG with optional image analysis.
+    
+    Now supports:
+    - Text-only questions (original functionality)
+    - Image + text questions (vision analysis + RAG)
+    - Session-based conversation memory
+    
     Returns answer with source references and session_id.
     """
     if rag_chain is None or session_manager is None:
@@ -179,26 +205,129 @@ async def ask_question(request: QuestionRequest):
     
     # Generate session ID if not provided
     import uuid
-    session_id = request.session_id or str(uuid.uuid4())
+    session_id_str = session_id or str(uuid.uuid4())
     
-    print(f"\n📝 Received request: '{request.question}'")
-    print(f"🆔 Session ID: {session_id[:8]}...")
+    print(f"\n📝 Received request: '{question}'")
+    print(f"🆔 Session ID: {session_id_str[:8]}...")
+    
+    # Handle file if provided (image or document)
+    file_context = ""
+    temp_file_path = None
+    
+    if image:  # 'image' parameter name kept for backward compatibility
+        file_type = _detect_file_type(image.filename)
+        print(f"📎 File attached: {image.filename} (type: {file_type})")
+        
+        try:
+            if file_type == 'image':
+                # Image analysis with vision model
+                from src.vision_analyzer import VisionAnalyzer, save_uploaded_image, cleanup_temp_image
+                
+                temp_file_path = save_uploaded_image(image)
+                
+                vision_config = rag_chain.config.get('llm', {})
+                vision_model = vision_config.get('vision_model', 'gpt-4o-mini')
+                
+                analyzer = VisionAnalyzer(model=vision_model)
+                image_analysis = analyzer.analyze_image(temp_file_path, question)
+                
+                file_context = f"\n\n[Image Context]\n{image_analysis}\n"
+                print(f"✓ Vision analysis complete")
+                
+            elif file_type == 'pdf':
+                # PDF → Convert to images → Vision analysis
+                from src.vision_analyzer import VisionAnalyzer, save_uploaded_image, cleanup_temp_image
+                from pdf2image import convert_from_path
+                import os
+                
+                # Save PDF temporarily
+                temp_file_path = save_uploaded_image(image)
+                
+                print(f"📄 Converting PDF to images for vision analysis...")
+                
+                # Convert PDF pages to images
+                try:
+                    # Convert only first 5 pages to avoid excessive cost
+                    images = convert_from_path(
+                        temp_file_path, 
+                        dpi=150,  # Good quality for vision
+                        first_page=1,
+                        last_page=5  # Limit to first 5 pages
+                    )
+                    
+                    print(f"✓ Converted {len(images)} pages to images")
+                    
+                    # Initialize vision analyzer
+                    vision_config = rag_chain.config.get('llm', {})
+                    vision_model = vision_config.get('vision_model', 'gpt-4o-mini')
+                    analyzer = VisionAnalyzer(model=vision_model)
+                    
+                    # Analyze each page
+                    page_analyses = []
+                    for i, img in enumerate(images, 1):
+                        # Save image temporarily
+                        temp_img_path = f"/tmp/pdf_page_{i}_{os.urandom(8).hex()}.png"
+                        img.save(temp_img_path, 'PNG')
+                        
+                        # Vision analysis
+                        analysis = analyzer.analyze_image(temp_img_path, question)
+                        page_analyses.append(f"--- Page {i} ---\n{analysis}")
+                        
+                        # Clean up temp image
+                        try:
+                            os.remove(temp_img_path)
+                        except:
+                            pass
+                    
+                    # Combine all page analyses
+                    combined_analysis = "\n\n".join(page_analyses)
+                    file_context = f"\n\n[PDF Analysis - {len(images)} pages]\n{combined_analysis}\n"
+                    print(f"✓ PDF vision analysis complete")
+                    
+                except Exception as e:
+                    print(f"⚠️  PDF conversion error: {e}")
+                    file_context = f"\n\n[Note: Could not analyze PDF: {str(e)}]"
+                
+            else:
+                file_context = f"\n\n[Note: Unsupported file type: {file_type}]"
+                print(f"⚠️  Unsupported file type: {file_type}")
+            
+        except Exception as e:
+            print(f"❌ Error processing file: {e}")
+            import traceback
+            traceback.print_exc()
+            # Continue without file analysis rather than failing completely
+            file_context = f"\n\n[Note: File was provided but could not be processed: {str(e)}]"
     
     # Get or create session
-    session = session_manager.get_or_create_session(session_id)
+    session = session_manager.get_or_create_session(session_id_str)
     
     try:
+        # Format question with file context
+        # Important: Keep original question clear so conversation context works
+        if file_context:
+            # Add file context as additional information, not replacing question
+            enhanced_question = f"""{question}
+
+[INFORMATION ADDITIONNELLE DU FICHIER JOINT]
+{file_context.strip()}
+[FIN DU FICHIER]
+
+Note: Utilisez l'historique de conversation pour comprendre le contexte de cette question."""
+        else:
+            enhanced_question = question
+        
         result = rag_chain.query(
-            question=request.question,
-            method=request.method,
-            session=session  # Pass session instead of history
+            question=enhanced_question,
+            method=method,
+            session=session
         )
         
         return AnswerResponse(
             answer=result["answer"],
             sources=result["sources"],
-            method_used=request.method,
-            session_id=session_id
+            method_used=method,
+            session_id=session_id_str
         )
         
     except Exception as e:
@@ -207,6 +336,12 @@ async def ask_question(request: QuestionRequest):
             status_code=500,
             detail=f"Error processing question: {str(e)}"
         )
+    
+    finally:
+        # Clean up temporary file
+        if temp_file_path:
+            from src.vision_analyzer import cleanup_temp_image
+            cleanup_temp_image(temp_file_path)
 
 
 @app.post("/upload")

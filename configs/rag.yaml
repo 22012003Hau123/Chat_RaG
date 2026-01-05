@@ -30,6 +30,7 @@ retrieval:
 llm:
   provider: "openai"           # Options: "openai", "huggingface", "ollama"
   model: "gpt-3.5-turbo"      # Model name
+  vision_model: "gpt-4o-mini" # Vision model for image analysis
   max_tokens: 1000            # Maximum response length
   temperature: 0.1            # Response creativity (0=deterministic, 1=creative)
 

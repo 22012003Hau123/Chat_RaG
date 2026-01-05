@@ -2,6 +2,11 @@
 const chatMessages = document.getElementById('chatMessages');
 const questionInput = document.getElementById('questionInput');
 const sendButton = document.getElementById('sendButton');
+const imagePreviewArea = document.getElementById('imagePreviewArea');
+const imageInput = document.getElementById('imageInput');
+
+// Image attachment state
+let attachedImage = null;
 
 // Generate UUID for session ID
 function generateUUID() {
@@ -12,11 +17,11 @@ function generateUUID() {
     });
 }
 
-// Session management
-let sessionId = localStorage.getItem('chat_session_id');
+// Session management (tab-scoped with sessionStorage)
+let sessionId = sessionStorage.getItem('chat_session_id');
 if (!sessionId) {
     sessionId = generateUUID();
-    localStorage.setItem('chat_session_id', sessionId);
+    sessionStorage.setItem('chat_session_id', sessionId);
     console.log('🆔 New session created:', sessionId);
 } else {
     console.log('🆔 Existing session loaded:', sessionId);
@@ -25,7 +30,7 @@ if (!sessionId) {
 // Function to reset session (for new conversation)
 function resetSession() {
     sessionId = generateUUID();
-    localStorage.setItem('chat_session_id', sessionId);
+    sessionStorage.setItem('chat_session_id', sessionId);
     console.log('🔄 Session reset:', sessionId);
     // Clear chat UI
     chatMessages.innerHTML = '';
@@ -120,10 +125,39 @@ function addMessage(text, isUser, sources = null) {
 
 async function sendMessage() {
     const question = questionInput.value.trim();
-    if (!question) return;
+    if (!question && !attachedImage) return;
     
-    // Add user message
-    addMessage(question, true);
+    // Add user message with image thumbnail if present
+    if (attachedImage) {
+        // Create message with thumbnail
+        const reader = new FileReader();
+        reader.onload = function(e) {
+            const messageText = question || 'Analyze this image';
+            const messageWithImage = `
+                <div class="user-message-text">${messageText}</div>
+                <img src="${e.target.result}" class="user-image-thumbnail" alt="Uploaded image" />
+            `;
+            const messageDiv = document.createElement('div');
+            messageDiv.className = 'message user';
+            
+            const avatar = document.createElement('div');
+            avatar.className = 'message-avatar';
+            avatar.textContent = '\u{1F464}';  // 👤 User emoji
+            
+            const content = document.createElement('div');
+            content.className = 'message-content';
+            content.innerHTML = messageWithImage;
+            
+            messageDiv.appendChild(content);
+            messageDiv.appendChild(avatar);
+            chatMessages.appendChild(messageDiv);
+            chatMessages.scrollTop = chatMessages.scrollHeight;
+        };
+        reader.readAsDataURL(attachedImage);
+    } else {
+        addMessage(question, true);
+    }
+    
     questionInput.value = '';
     
     // Disable input while processing
@@ -132,16 +166,19 @@ async function sendMessage() {
     sendButton.innerHTML = '<span class="loading">Thinking</span>';
     
     try {
+        // Use FormData to send both text and image
+        const formData = new FormData();
+        formData.append('question', question || 'Analyze this image');
+        formData.append('method', 'mmr');
+        formData.append('session_id', sessionId);
+        
+        if (attachedImage) {
+            formData.append('image', attachedImage);
+        }
+        
         const response = await fetch('/ask', {
             method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({
-                question: question,
-                method: 'mmr',  // MMR for diverse, comprehensive answers
-                session_id: sessionId  // Send session ID instead of history
-            })
+            body: formData  // No Content-Type header - browser sets it automatically with boundary
         });
         
         if (!response.ok) {
@@ -150,13 +187,16 @@ async function sendMessage() {
         
         const data = await response.json();
         
-        // Update session ID from response (in case backend generated new one)
+        // Update session ID from response
         if (data.session_id) {
             sessionId = data.session_id;
-            localStorage.setItem('chat_session_id', sessionId);
+            sessionStorage.setItem('chat_session_id', sessionId);
         }
         
         addMessage(data.answer, false, data.sources);
+        
+        // Clear attached image after sending
+        clearImagePreview();
         
     } catch (error) {
         console.error('Error:', error);
@@ -164,16 +204,158 @@ async function sendMessage() {
     } finally {
         sendButton.disabled = false;
         questionInput.disabled = false;
-        sendButton.textContent = 'Envoyer';
+        sendButton.textContent = 'Send';
         questionInput.focus();
     }
 }
+
+// ============= IMAGE HANDLING =============
+
+// Handle keyboard shortcuts in textarea
+function handleInputKeydown(event) {
+    // Send on Enter (without Shift)
+    if (event.key === 'Enter' && !event.shiftKey) {
+        event.preventDefault();
+        sendMessage();
+    }
+}
+
+// Open image picker
+function openImagePicker() {
+    imageInput.click();
+}
+
+// Handle manual file selection (image or PDF)
+function handleImageSelect(event) {
+    const file = event.target.files[0];
+    if (file) {
+        // Accept images and PDF only
+        const validTypes = ['image/', '.pdf'];
+        const isValid = validTypes.some(type => 
+            file.type.includes(type) || file.name.toLowerCase().endsWith(type)
+        );
+        
+        if (isValid) {
+            attachedImage = file;
+            showFilePreview(file);
+        } else {
+            alert('Unsupported file type. Please upload image or PDF.');
+        }
+    }
+}
+
+// Handle paste event for Ctrl+V image paste
+questionInput.addEventListener('paste', (event) => {
+    const items = event.clipboardData.items;
+    
+    for (let item of items) {
+        if (item.type.indexOf('image') !== -1) {
+            event.preventDefault();
+            
+            const file = item.getAsFile();
+            attachedImage = file;
+            showFilePreview(file);  // FIXED: was showImagePreview
+            
+            console.log('📋 Image pasted from clipboard');
+            break;
+        }
+    }
+});
+
+// Show file preview (image or document)
+function showFilePreview(file) {
+    const isImage = file.type.startsWith('image/');
+    
+    if (isImage) {
+        // Image preview with thumbnail
+        const reader = new FileReader();
+        reader.onload = (e) => {
+            imagePreviewArea.innerHTML = `
+                <div class="image-preview">
+                    <img src="${e.target.result}" alt="Preview" />
+                    <button class="remove-image" onclick="clearImagePreview()" title="Remove file">
+                        ✕
+                    </button>
+                    <div class="image-filename">${file.name}</div>
+                </div>
+            `;
+            imagePreviewArea.style.display = 'block';
+        };
+        reader.readAsDataURL(file);
+    } else {
+        // Document preview with icon
+        const fileIcon = getFileIcon(file.name);
+        imagePreviewArea.innerHTML = `
+            <div class="file-preview">
+                <div class="file-icon">${fileIcon}</div>
+                <div class="file-info">
+                    <div class="file-name">${file.name}</div>
+                    <div class="file-size">${formatFileSize(file.size)}</div>
+                </div>
+                <button class="remove-image" onclick="clearImagePreview()" title="Remove file">
+                    ✕
+                </button>
+            </div>
+        `;
+        imagePreviewArea.style.display = 'block';
+    }
+}
+
+// Get icon for file type
+function getFileIcon(filename) {
+    const ext = filename.split('.').pop().toLowerCase();
+    if (ext === 'pdf') {
+        return '📄';
+    }
+    return '📎';
+}
+
+// Format file size
+function formatFileSize(bytes) {
+    if (bytes < 1024) return bytes + ' B';
+    if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+    return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+}
+
+// Clear image preview
+function clearImagePreview() {
+    attachedImage = null;
+    imagePreviewArea.innerHTML = '';
+    imagePreviewArea.style.display = 'none';
+    imageInput.value = ''; // Reset file input
+}
+
+// ============= INITIALIZATION =============
 
 // Focus input on load
 questionInput.focus();
 
 // Add initial greeting
 addMessage("Bonjour! Je suis votre assistant IA pour les documents Auchan. Comment puis-je vous aider ?", false);
+
+// Make all links in chat open in new tabs
+function makeLinksOpenInNewTab() {
+    const links = document.querySelectorAll('.message-content a');
+    links.forEach(link => {
+        if (!link.hasAttribute('target')) {
+            link.setAttribute('target', '_blank');
+            link.setAttribute('rel', 'noopener noreferrer'); // Security best practice
+        }
+    });
+}
+
+// Run on initial load and whenever new messages are added
+makeLinksOpenInNewTab();
+
+// Monitor for new messages and update links
+const chatObserver = new MutationObserver(() => {
+    makeLinksOpenInNewTab();
+});
+
+chatObserver.observe(chatMessages, {
+    childList: true,
+    subtree: true
+});
 
 // ============= IMAGE LIGHTBOX MODAL =============
 
