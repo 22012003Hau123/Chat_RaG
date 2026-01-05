@@ -9,11 +9,13 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 # Install system dependencies
 # libgl1 and libglib2.0 are often needed for OpenCV/image libraries if used
 # tesseract-ocr is needed for OCR if pytesseract is used
+# poppler-utils is needed for pdf2image to convert PDFs
 RUN apt-get update && apt-get install -y \
     gcc \
     libgl1 \
     libglib2.0-0 \
     tesseract-ocr \
+    poppler-utils \
     && rm -rf /var/lib/apt/lists/*
 
 # Set working directory
@@ -31,8 +33,8 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy the rest of the application
 COPY . .
 
-# Create directory for Tesseract data if needed or other temp dirs
-RUN mkdir -p /app/static/images
+# Create directories for uploads and temp files
+RUN mkdir -p /app/static/images /app/static/temp_images
 
 # Create user to run app (security best practice, required by some platforms)
 RUN useradd -m -u 1000 user
