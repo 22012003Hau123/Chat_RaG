@@ -34,6 +34,7 @@ from pydantic import BaseModel
 from src.rag_chain import RAGChain
 from src.configuration import resolve_config_path
 from src.session_manager import SessionManager
+from src.mistral_image_search import get_mistral_image_search
 
 
 # Global variables to hold RAG chain and session manager
@@ -218,6 +219,106 @@ async def ask_question(
         file_type = _detect_file_type(image.filename)
         print(f"📎 File attached: {image.filename} (type: {file_type})")
         
+        # MISTRAL IMAGE SEARCH: Detect if this is pure "find this image" query
+        pure_search_keywords = [
+            # Vietnamese
+            'tìm', 'tim', 'chỗ nào',
+            # French
+            'où', 'trouve', 'trouver', 'fichier', 'quel', 'dans',
+            # English
+            'find', 'search', 'locate', 'which', 'where'
+        ]
+        analysis_keywords = ['phân tích', 'mô tả', 'mo ta', 'analyze', 'describe', 'what', 'how', 'explain']
+        
+        is_pure_image_search = (
+            file_type == 'image' and
+            any(kw in question.lower() for kw in pure_search_keywords) and
+            not any(kw in question.lower() for kw in analysis_keywords)
+        )
+        
+        if is_pure_image_search:
+            print("🔍 MISTRAL IMAGE SEARCH: Semantic annotation matching")
+            
+            try:
+                from src.vision_analyzer import save_uploaded_image, cleanup_temp_image
+                import os
+                
+                temp_file_path = save_uploaded_image(image)
+                
+                # Get Mistral API key
+                mistral_key = os.getenv('MISTRAL_API_KEY')
+                if not mistral_key:
+                    print("⚠️ MISTRAL_API_KEY not found, falling back to normal search")
+                else:
+                    # Mistral annotation search
+                    searcher = get_mistral_image_search(mistral_key)
+                    match = searcher.search_by_annotation(temp_file_path, rag_chain)
+                    
+                    cleanup_temp_image(temp_file_path)
+                    
+                    if match:
+                        return AnswerResponse(
+                            answer=f"""✅ Image trouvée!
+
+**Document:** {match['doc_name']}
+**Image:** [Voir l'image]({match['image_url']})
+
+**Annotation:** {match['annotation']}""",
+                            sources=match['full_result'].get('sources', []),
+                            method_used="mistral_annotation_search",
+                            session_id=session_id_str
+                        )
+                    else:
+                        return AnswerResponse(
+                            answer="❌ Aucune image correspondante trouvée.",
+                            sources=[],
+                            method_used="mistral_annotation_search",
+                            session_id=session_id_str
+                        )
+            except Exception as e:
+                print(f"⚠️ Mistral search error: {e}")
+                import traceback
+                traceback.print_exc()
+                if temp_file_path:
+                    cleanup_temp_image(temp_file_path)
+            
+            try:
+                from src.vision_analyzer import save_uploaded_image, cleanup_temp_image
+                temp_file_path = save_uploaded_image(image)
+                
+                # Get all documents for comparison
+                all_docs = rag_chain.retriever.retrieve(query="", k=100, method="similarity")
+                
+                # Direct image search
+                searcher = get_direct_image_search(similarity_threshold=0.80)
+                match = searcher.search_all_images(temp_file_path, all_docs)
+                
+                cleanup_temp_image(temp_file_path)
+                
+                if match:
+                    return AnswerResponse(
+                        answer=f"""✅ Image trouvée! (Similarité: {match['similarity']:.1%})
+
+**Fichier:** [{match['file_name']}]({match['file_url']})
+**Image:** [Voir l'image]({match['image_url']})""",
+                        sources=[f"[{match['file_name']}]({match['file_url']})"],
+                        method_used="direct_image_search",
+                        session_id=session_id_str
+                    )
+                else:
+                    return AnswerResponse(
+                        answer="❌ Aucune image correspondante trouvée dans la base de données.",
+                        sources=[],
+                        method_used="direct_image_search",
+                        session_id=session_id_str
+                    )
+            except Exception as e:
+                print(f"⚠️ Direct search error: {e}")
+                if temp_file_path:
+                    cleanup_temp_image(temp_file_path)
+                # Fall through to normal flow
+        
+        # NORMAL FLOW: Vision analysis for content questions
         try:
             if file_type == 'image':
                 # Image analysis with vision model
@@ -380,8 +481,11 @@ async def upload_document(file: UploadFile = File(...)):
         print(f"{'='*60}\n")
         
         # Run ingestion script
+        # Pass the original filename via --storage-path to ensure correct metadata and source name
+        cmd = ['python', 'ingest_single_file.py', '--file', temp_file, '--storage-path', file.filename]
+        
         result = subprocess.run(
-            ['python', 'ingest_single_file.py', '--file', temp_file],
+            cmd,
             cwd=os.path.dirname(os.path.abspath(__file__)),
             capture_output=True,
             text=True,
@@ -397,9 +501,16 @@ async def upload_document(file: UploadFile = File(...)):
         output = result.stdout
         chunks_created = 0
         for line in output.split('\n'):
-            if 'Created' in line and 'chunks' in line:
+            # Match output from batch_process_all.py: "✓ Inserted 5 documents to Supabase"
+            if 'Inserted' in line and 'documents' in line:
                 try:
-                    chunks_created = int(line.split('Created')[1].split('chunks')[0].strip())
+                    # Extract number between 'Inserted' and 'documents'
+                    # Line format: "✓ Total inserted: 3 documents"
+                    parts = line.split('Inserted')[1].split('documents')[0]
+                    # Remove non-digit characters (like ':')
+                    num_str = ''.join(filter(str.isdigit, parts))
+                    if num_str:
+                        chunks_created = int(num_str)
                 except:
                     pass
         

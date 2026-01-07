@@ -56,6 +56,17 @@ def _extract_mistral_content(
     pages = ocr_response.get("pages", [])
     markdown_parts = []
     image_annotations_map = {}  # Map image ID -> annotation để inject vào text
+    tables_map = {}  # Map table ID -> content để inject vào text
+    
+    # First pass: collect all tables from all pages
+    for page in pages:
+        tables = page.get("tables", [])
+        for tbl in tables:
+            tbl_id = tbl.get("id")  # e.g. "tbl-0.md"
+            tbl_content = tbl.get("content", "")
+            if tbl_id and tbl_content:
+                tables_map[tbl_id] = tbl_content
+                print(f"[DEBUG] Found table {tbl_id}: {len(tbl_content)} chars")
     
     for page in pages:
         # Main markdown content
@@ -94,6 +105,7 @@ def _extract_mistral_content(
                 img_info = {
                     "index": len(result["images"]),
                     "id": img_id,
+                    "page_index": page.get('index', 0),  # Page number (0-indexed)
                     "bbox": img.get("bbox"),
                     "base64": img.get("image_base64"),
                     "annotation": bbox_annotation,
@@ -128,14 +140,19 @@ def _extract_mistral_content(
         
         new_placeholder = f"![{img_id}]({new_url})"
         
-        # Add annotation text if exists
-        annotation_text = ""
-        annotation = image_annotations_map.get(img_id)
-        if annotation and isinstance(annotation, dict) and "summary" in annotation:
-            annotation_text = f"\n{annotation['summary']}"
-        
-        # Replace old placeholder with new placeholder + annotation
-        full_text = full_text.replace(old_placeholder, new_placeholder + annotation_text)
+        # Replace old placeholder with new placeholder
+        # Note: We do NOT inject description here anymore
+        # batch_process_all.py will handle the full format: [IMAGE: type] Description... [View: url]
+        full_text = full_text.replace(old_placeholder, new_placeholder)
+    
+    # Inject table content: replace [tbl-X.md](tbl-X.md) with actual markdown table
+    for tbl_id, tbl_content in tables_map.items():
+        # Format: [tbl-0.md](tbl-0.md)
+        old_placeholder = f"[{tbl_id}]({tbl_id})"
+        # Replace with actual table content (with a header for clarity)
+        new_content = f"\n**[Table: {tbl_id}]**\n\n{tbl_content}\n"
+        full_text = full_text.replace(old_placeholder, new_content)
+        print(f"[DEBUG] Injected table {tbl_id} content into text")
     
     result["text"] = full_text
     

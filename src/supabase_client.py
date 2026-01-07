@@ -148,18 +148,20 @@ class SupabaseClient:
         self,
         image_bytes: bytes,
         filename: str,
-        bucket: str = 'alpagino'
+        bucket: str = 'alpagino',
+        content_type: str = None
     ) -> str:
         """
-        Upload image to Supabase Storage.
+        Upload file to Supabase Storage.
         
         Args:
-            image_bytes: Image file content as bytes
+            image_bytes: File content as bytes
             filename: Name for the uploaded file
             bucket: Storage bucket name
+            content_type: MIME type (auto-detected if None)
             
         Returns:
-            Public URL of uploaded image
+            Public URL of uploaded file
         """
         try:
             # Try to remove existing file first (ignore error if doesn't exist)
@@ -168,11 +170,26 @@ class SupabaseClient:
             except:
                 pass  # File doesn't exist, that's OK
             
+            # Auto-detect content type based on extension if not provided
+            if content_type is None:
+                ext = filename.lower().split('.')[-1] if '.' in filename else ''
+                content_type_map = {
+                    'pdf': 'application/pdf',
+                    'docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+                    'pptx': 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+                    'png': 'image/png',
+                    'jpg': 'image/jpeg',
+                    'jpeg': 'image/jpeg',
+                    'gif': 'image/gif',
+                    'webp': 'image/webp',
+                }
+                content_type = content_type_map.get(ext, 'application/octet-stream')
+            
             # Upload to storage
             self.storage.from_(bucket).upload(
                 filename,
                 image_bytes,
-                file_options={"content-type": "image/png"}
+                file_options={"content-type": content_type}
             )
             
             # Get public URL
@@ -214,6 +231,27 @@ class SupabaseClient:
             print(f"Error getting document count: {e}")
             return 0
     
+    
+    def delete_documents_by_source(self, source_name: str) -> bool:
+        """
+        Delete all chunks associated with a specific source file.
+        
+        Args:
+            source_name: Name of the source file (from metadata)
+            
+        Returns:
+            True if successful, False otherwise
+        """
+        try:
+            # We filter by metadata->>source
+            # Note: This checks the specific path in the metadata JSONB column
+            self.client.table('alpagino_documents').delete().eq('metadata->>source', source_name).execute()
+            print(f"✓ Removed existing documents for source: {source_name}")
+            return True
+        except Exception as e:
+            print(f"Error deleting documents for {source_name}: {e}")
+            return False
+
     def clear_all_documents(self) -> bool:
         """
         Delete all documents from the database.

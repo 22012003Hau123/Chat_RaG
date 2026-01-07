@@ -136,6 +136,7 @@ class VisionAnalyzer:
 - Technical terms, specifications
 - Key phrases and terminology
 
+
 **Layout & Structure:**
 - Overall layout and spatial organization
 - Dimensions and measurements (exact values if visible)
@@ -146,6 +147,7 @@ class VisionAnalyzer:
 - Product codes, part numbers, or identifiers
 - Headings and section titles
 - **FILE NAMES** (très important!)
+- **FOLDER PATHS** (crucial for finding source!)
 
 **Technical Details:**
 - Specifications and parameters
@@ -161,7 +163,7 @@ class VisionAnalyzer:
 Start with: "KEYWORDS FOR SEARCH: [list key terms separated by commas]"
 Then provide full detailed analysis.
 
-Be precise with numbers and technical terminology."""
+Be precise with file names, paths, and folder structures."""
 
         if user_question:
             return f"""{base_prompt}

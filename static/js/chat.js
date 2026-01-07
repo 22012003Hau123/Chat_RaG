@@ -93,13 +93,23 @@ function addMessage(text, isUser, sources = null) {
         const sourcesDiv = document.createElement('div');
         sourcesDiv.className = 'message-sources';
         
-        // Limit to first 2 sources
-        const maxSources = 2;
-        const displaySources = sources.slice(0, maxSources);
-        const remainingCount = sources.length - maxSources;
+        // Remove duplicates by filename
+        const uniqueSources = [];
+        const seenNames = new Set();
         
-        // Process links in sources
-        const sourceLinks = displaySources.map(source => {
+        for (const source of sources) {
+            // Extract filename from markdown link or plain text
+            const match = source.match(/\[(.*?)\]/);
+            const fileName = match ? match[1] : source;
+            
+            if (!seenNames.has(fileName)) {
+                seenNames.add(fileName);
+                uniqueSources.push(source);
+            }
+        }
+        
+        // Process links in sources (show ALL, no limit)
+        const sourceLinks = uniqueSources.map(source => {
             const match = source.match(/\[(.*?)\]\((.*?)\)/);
             if (match) {
                 return `<a href="${match[2]}" target="_blank">${match[1]}</a>`;
@@ -107,10 +117,8 @@ function addMessage(text, isUser, sources = null) {
             return source;
         });
         
+        // Display all sources without "+ X more"
         let sourcesText = `Sources: ${sourceLinks.join(', ')}`;
-        if (remainingCount > 0) {
-            sourcesText += ` <span style="opacity: 0.7;">+ ${remainingCount} more</span>`;
-        }
         
         sourcesDiv.innerHTML = sourcesText;
         content.appendChild(sourcesDiv);
@@ -462,15 +470,21 @@ function openUploadModal() {
     document.getElementById('uploadModal').style.display = 'flex';
 }
 
-function closeUploadModal() {
-    document.getElementById('uploadModal').style.display = 'none';
-    document.getElementById('fileInput').value = '';
-    document.getElementById('uploadArea').innerHTML = `
+
+function resetUploadForm() {
+    const uploadArea = document.getElementById('uploadArea');
+    uploadArea.innerHTML = `
+        <input type="file" id="fileInput" accept=".pdf,.docx,.pptx" onchange="handleFileSelect(event)" style="display: none;">
         <div class="upload-placeholder" onclick="document.getElementById('fileInput').click()">
             <div class="upload-icon">📁</div>
             <p>Click to select a file or drag and drop</p>
         </div>
     `;
+}
+
+function closeUploadModal() {
+    document.getElementById('uploadModal').style.display = 'none';
+    resetUploadForm();
 }
 
 function handleFileSelect(event) {
@@ -529,15 +543,21 @@ async function uploadFile(file) {
                 <p><strong>Document ajouté avec succès!</strong></p>
                 <p class="upload-detail">${result.filename}</p>
                 <p class="upload-detail">${result.chunks_created} chunks created</p>
+                <div style="margin-top: 15px;">
+                    <button onclick="resetUploadForm()" class="upload-submit-btn" style="width: auto; padding: 10px 20px; margin-right: 10px;">
+                        📂 Add Another File
+                    </button>
+                    <button onclick="closeUploadModal()" class="upload-submit-btn" style="width: auto; padding: 10px 20px; background: #666;">
+                        Finish
+                    </button>
+                </div>
             </div>
         `;
         
-        // Close modal after 2 seconds
-        setTimeout(() => {
-            closeUploadModal();
-        }, 2000);
+        // Removed auto-close setTimeout
         
     } catch (error) {
+
         console.error('Upload error:', error);
         uploadArea.innerHTML = `
             <div class="upload-error">
