@@ -11,7 +11,9 @@ Usage:
 """
 
 import os
-from typing import Optional
+import zipfile
+import io
+from typing import Optional, Dict, List, Any
 from pathlib import Path
 
 
@@ -35,36 +37,53 @@ class DocumentExtractor:
         self.max_chars = max_chars
         print(f"✓ Document Extractor initialized (max: {max_chars} chars)")
     
-    def extract_from_file(self, file_path: str) -> str:
+    def extract_from_file(self, file_path: str) -> Dict[str, Any]:
         """
-        Extract text from any supported document type.
+        Extract text and images from any supported document type.
         
         Args:
             file_path: Path to document file
             
         Returns:
-            Extracted text content
+            Dict containing:
+            - 'text': Extracted text content
+            - 'images': List of dicts {'name': str, 'bytes': bytes, 'type': str}
         """
         ext = os.path.splitext(file_path)[1].lower()
         
-        print(f"\n📄 Extracting text from: {Path(file_path).name}")
+        print(f"\n📄 Extracting content from: {Path(file_path).name}")
         
-        if ext == '.pdf':
-            text = self._extract_pdf(file_path)
-        elif ext == '.docx':
-            text = self._extract_docx(file_path)
-        elif ext == '.pptx':
-            text = self._extract_pptx(file_path)
-        else:
-            return f"[Unsupported file type: {ext}]"
+        result = {
+            "text": "",
+            "images": []
+        }
         
-        # Truncate if too long
-        if len(text) > self.max_chars:
-            text = text[:self.max_chars] + f"\n\n[... truncated, original length: {len(text)} chars]"
-            print(f"⚠️  Text truncated to {self.max_chars} chars")
-        
-        print(f"✓ Extracted {len(text)} characters")
-        return text
+        try:
+            if ext == '.pdf':
+                result["text"] = self._extract_pdf(file_path)
+            elif ext == '.docx':
+                result = self._extract_docx(file_path)
+            elif ext == '.pptx':
+                result = self._extract_pptx(file_path)
+            else:
+                result["text"] = f"[Unsupported file type: {ext}]"
+            
+            # Truncate text if too long
+            text = result.get("text", "")
+            if len(text) > self.max_chars:
+                result["text"] = text[:self.max_chars] + f"\n\n[... truncated, original length: {len(text)} chars]"
+                print(f"⚠️  Text truncated to {self.max_chars} chars")
+            
+            print(f"✓ Extracted {len(result['text'])} characters")
+            if result['images']:
+                print(f"✓ Extracted {len(result['images'])} images")
+                
+            return result
+            
+        except Exception as e:
+            print(f"❌ Error extracting file: {e}")
+            result["text"] = f"[Error: {str(e)}]"
+            return result
     
     def _extract_pdf(self, file_path: str) -> str:
         """Extract text from PDF using PyPDF."""
@@ -90,8 +109,9 @@ class DocumentExtractor:
         except Exception as e:
             return f"[Error extracting PDF: {str(e)}]"
     
-    def _extract_docx(self, file_path: str) -> str:
-        """Extract text from DOCX using python-docx."""
+    def _extract_docx(self, file_path: str) -> Dict[str, Any]:
+        """Extract text and images from DOCX."""
+        result = {"text": "", "images": []}
         try:
             from docx import Document
             
@@ -113,46 +133,113 @@ class DocumentExtractor:
                 for table in doc.tables:
                     table_text = []
                     for row in table.rows:
-                        row_text = " | ".join(cell.text.strip() for cell in row.cells)
-                        table_text.append(row_text)
-                    text_parts.append("\n".join(table_text))
+                        # Handle potential merged cells or empty cells
+                        row_cells = [cell.text.strip() for cell in row.cells] if row.cells else []
+                        row_text = " | ".join(filter(None, row_cells))
+                        if row_text:
+                            table_text.append(f"| {row_text} |")
+                    
+                    if table_text:
+                        text_parts.append("\n" + "\n".join(table_text) + "\n")
                     
                     if sum(len(p) for p in text_parts) > self.max_chars:
                         break
             
-            return "\n\n".join(text_parts)
+            # --- Extract Images via ZipFile ---
+            # DOCX is a zip file. Images can be in 'media/' or 'word/media/'
+            try:
+                with zipfile.ZipFile(file_path) as z:
+                    for filename in z.namelist():
+                        # Check both 'media/' and 'word/media/' paths
+                        if (filename.startswith('word/media/') or filename.startswith('media/')) and not filename.endswith('/'):
+                            # Only extract valid image types
+                            ext = os.path.splitext(filename)[1].lower()
+                            if ext in ['.png', '.jpg', '.jpeg', '.gif', '.bmp', '.tiff']:
+                                idx = len(result["images"])
+                                short_name = Path(filename).name # image1.png
+                                
+                                # Read image bytes
+                                img_bytes = z.read(filename)
+                                
+                                # Add to results
+                                result["images"].append({
+                                    "index": idx,
+                                    "name": short_name,
+                                    "bytes": img_bytes,
+                                    "ext": ext
+                                })
+                                
+                                # Append placeholder to text (since we don't know exact position)
+                                # Use format: ![name](name) to match batch_process_all.py injection pattern
+                                text_parts.append(f"\n![{short_name}]({short_name})\n")
+            except Exception as img_err:
+                print(f"⚠️  Error extracting DOCX images: {img_err}")
+                
+            result["text"] = "\n\n".join(text_parts)
+            return result
             
         except Exception as e:
-            return f"[Error extracting DOCX: {str(e)}]"
+            return {"text": f"[Error extracting DOCX: {str(e)}]", "images": []}
     
-    def _extract_pptx(self, file_path: str) -> str:
-        """Extract text from PPTX using python-pptx."""
+    def _extract_pptx(self, file_path: str) -> Dict[str, Any]:
+        """Extract text and images from PPTX using python-pptx."""
+        result = {"text": "", "images": []}
         try:
             from pptx import Presentation
+            from pptx.enum.shapes import MSO_SHAPE_TYPE
             
             prs = Presentation(file_path)
             text_parts = []
             
             # Extract from all slides
             for i, slide in enumerate(prs.slides):
-                slide_text = [f"--- Slide {i+1} ---"]
+                slide_header = f"--- Slide {i+1} ---"
+                slide_content = [slide_header]
                 
-                # Extract from all shapes
+                # Iterate shapes
                 for shape in slide.shapes:
+                    # Text extraction
                     if hasattr(shape, "text") and shape.text.strip():
-                        slide_text.append(shape.text)
+                        slide_content.append(shape.text)
+                    
+                    # Image extraction
+                    if shape.shape_type == MSO_SHAPE_TYPE.PICTURE:
+                        try:
+                            image = shape.image
+                            img_bytes = image.blob
+                            ext = "." + image.ext
+                            
+                            idx = len(result["images"])
+                            img_name = f"slide{i+1}_img{idx}{ext}"
+                            
+                            # Add to results
+                            result["images"].append({
+                                "index": idx,
+                                "name": img_name,
+                                "bytes": img_bytes,
+                                "ext": ext,
+                                "page": i  # Track slide number
+                            })
+                            
+                            # Insert placeholder in text flow
+                            # Use format: ![name](name) to match batch_process_all.py injection pattern
+                            slide_content.append(f"\n![{img_name}]({img_name})\n")
+                            
+                        except Exception as img_err:
+                            print(f"⚠️  Error extracting PPTX image shape: {img_err}")
                 
-                text_parts.append("\n".join(slide_text))
+                text_parts.append("\n".join(slide_content))
                 
                 # Stop if exceeding max chars
                 current_length = sum(len(p) for p in text_parts)
                 if current_length > self.max_chars:
                     break
             
-            return "\n\n".join(text_parts)
+            result["text"] = "\n\n".join(text_parts)
+            return result
             
         except Exception as e:
-            return f"[Error extracting PPTX: {str(e)}]"
+            return {"text": f"[Error extracting PPTX: {str(e)}]", "images": []}
 
 
 def get_file_type(filename: str) -> str:

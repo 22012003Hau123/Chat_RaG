@@ -32,6 +32,8 @@ from src.supabase_client import SupabaseClient
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_core.documents import Document
 import openai
+from src.document_extractor import DocumentExtractor
+from src.mistral_image_search import MistralImageSearch
 
 load_dotenv()
 
@@ -60,6 +62,13 @@ logger = logging.getLogger(__name__)
 
 # Initialize components
 try:
+    # Initialize Document Extractor for DOCX/PPTX
+    doc_extractor = DocumentExtractor()
+    
+    # Initialize Mistral Annotator for DOCX/PPTX images
+    mistral_api_key = os.getenv("MISTRAL_API_KEY")
+    mistral_annotator = MistralImageSearch(mistral_api_key) if mistral_api_key else None
+    
     openai_client = openai.OpenAI(api_key=os.getenv('OPENAI_API_KEY'))
     supabase = SupabaseClient()
     text_splitter = RecursiveCharacterTextSplitter(
@@ -145,53 +154,51 @@ try:
         extraction_data = None
         ext = f.suffix.lower()
         
+        # Define annotation schemas for Mistral OCR (used by both PDF and DOCX)
+        doc_schema = {
+            "type": "object",
+            "properties": {
+                "document_type": {
+                    "type": "string",
+                    "description": "The type of document (e.g., invoice, receipt, contract, article, slide)"
+                },
+                "main_topic": {
+                    "type": "string",
+                    "description": "The main topic or subject of the document"
+                },
+                "key_information": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "List of key information extracted from document"
+                }
+            },
+            "required": ["document_type", "main_topic"],
+            "additionalProperties": False
+        }
+        
+        bbox_schema = {
+            "type": "object",
+            "properties": {
+                "image_type": {
+                    "type": "string",
+                    "description": "The type of the image (e.g., product, chart, diagram, photo)"
+                },
+                "short_description": {
+                    "type": "string",
+                    "description": "A brief description in English describing the image"
+                },
+                "summary": {
+                    "type": "string",
+                    "description": "A detailed summary of the image content"
+                }
+            },
+            "required": ["image_type", "short_description", "summary"],
+            "additionalProperties": False
+        }
+        
         try:
             if ext == '.pdf':
-                # Define schema for document classification
-                doc_schema = {
-                    "type": "object",
-                    "properties": {
-                        "document_type": {
-                            "type": "string",
-                            "description": "The type of document (e.g., invoice, receipt, contract, article, slide)"
-                        },
-                        "main_topic": {
-                            "type": "string",
-                            "description": "The main topic or subject of the document"
-                        },
-                        "key_information": {
-                            "type": "array",
-                            "items": {"type": "string"},
-                            "description": "List of key information extracted from document"
-                        }
-                    },
-                    "required": ["document_type", "main_topic"],
-                    "additionalProperties": False
-                }
-                
-                # Define schema for IMAGE annotations (bbox)
-                # This makes Mistral describe EACH image in the PDF
-                bbox_schema = {
-                    "type": "object",
-                    "properties": {
-                        "image_type": {
-                            "type": "string",
-                            "description": "The type of the image (e.g., product, chart, diagram, photo)"
-                        },
-                        "short_description": {
-                            "type": "string",
-                            "description": "A brief description in English describing the image"
-                        },
-                        "summary": {
-                            "type": "string",
-                            "description": "A detailed summary of the image content"
-                        }
-                    },
-                    "required": ["image_type", "short_description", "summary"],
-                    "additionalProperties": False
-                }
-
-                # Use Mistral-enhanced PDF loader with BOTH schemas
+                # Use Mistral-enhanced PDF loader
                 extraction_data = load_pdf(
                     f, 
                     use_mistral=True,
@@ -199,8 +206,71 @@ try:
                     bbox_annotation_format=bbox_schema,
                     document_annotation_format=doc_schema
                 )
+            elif ext == '.docx':
+                # Handle DOCX with Mistral OCR (same as PDF for proper image positioning)
+                from src.docx import load_docx
+                
+                logger.info(f"  Processing DOCX with Mistral OCR...")
+                extraction_data = load_docx(
+                    f,
+                    use_mistral=True,
+                    include_images=True,
+                    bbox_annotation_format=bbox_schema,
+                    document_annotation_format=doc_schema
+                )
+            elif ext == '.pptx':
+                # Handle PPTX with DocumentExtractor (works well for slide context)
+                logger.info(f"  Extracting content from PPTX file...")
+                extracted_result = doc_extractor.extract_from_file(str(f))
+                
+                raw_text = extracted_result.get("text", "")
+                extracted_images = extracted_result.get("images", [])
+                
+                processed_images = []
+                
+                # Annotate extracted images using Mistral
+                if extracted_images and mistral_annotator:
+                    logger.info(f"  Found {len(extracted_images)} images. Annotating with Mistral...")
+                    for i, img in enumerate(extracted_images):
+                        try:
+                            # img is dict: {'index': 0, 'name': '...', 'bytes': b'...', 'ext': '...'}
+                            logger.info(f"  Analysing image {i+1}/{len(extracted_images)}: {img['name']}")
+                            
+                            # Annotate using Mistral (passing bytes directly)
+                            summary = mistral_annotator.annotate_image(image_bytes=img['bytes'])
+                            
+                            # Construct annotation object matching PDF schema
+                            annotation = {
+                                "image_type": "extracted_image",
+                                "short_description": f"Image extracted from {f.name}",
+                                "summary": summary if summary else "No description available"
+                            }
+                            
+                            # Convert bytes to base64 for compatibility with upload loop
+                            img_b64 = base64.b64encode(img['bytes']).decode('utf-8')
+                            
+                            # Construct image object
+                            processed_images.append({
+                                "id": img['name'],
+                                "base64": img_b64,
+                                "annotation": annotation,
+                                "index": i,
+                                "page_index": img.get('page', 0)
+                            })
+                            
+                        except Exception as ann_err:
+                            logger.error(f"  Failed to annotate image {img.get('name')}: {ann_err}")
+                
+                extraction_data = {
+                    'text': raw_text,
+                    'images': processed_images,
+                    'annotations': {
+                        'document_type': 'presentation',
+                        'main_topic': f.stem
+                    }
+                }
             else:
-                logger.warning(f"Skipping {f.name} (Only PDF fully supported in this batch script)")
+                logger.warning(f"Skipping {f.name} (Unsupported format for batch processing)")
                 continue
                 
             if not extraction_data:
@@ -256,9 +326,9 @@ try:
                         page_idx = img_data.get('page_index', 0)
                         img_idx = img_data.get('index', 0)
                         
-                        # Format: {filename}_page{X}_img{Y}.png
+                        # Format: {filename}_page{X}_img{Y}.png (1-based page numbering)
                         # Example: 1_TRACT_PDF BD_page1_img0.png
-                        img_filename = f"{base_name}_page{page_idx}_img{img_idx}.png"
+                        img_filename = f"{base_name}_page{page_idx + 1}_img{img_idx}.png"
 
 
                         # Upload to 'alpagino' bucket
@@ -274,9 +344,12 @@ try:
                         logger.error(f"  Failed to upload image {img_data.get('id')}: {e}")
                         
                 logger.info(f"  ✓ Uploaded extracted images to 'alpagino' bucket")
-                
-                # --- INJECT SUPABASE URLS INTO TEXT ---
-                # Replace placeholder ![img-0.jpeg](img-0.jpeg) with [View: public_url]
+
+            # --- INJECT SUPABASE URLS INTO TEXT ---
+            # Replace placeholder ![img-0.jpeg](img-0.jpeg) with [View: public_url]
+            # This needs to run after images are uploaded and public_urls are available
+            if 'images' in extraction_data and extraction_data['images']:
+                images = extraction_data['images']
                 text = extraction_data.get('text', '')
                 for img_data in images:
                     if 'public_url' in img_data and img_data.get('id'):

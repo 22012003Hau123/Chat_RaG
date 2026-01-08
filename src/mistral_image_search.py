@@ -35,7 +35,7 @@ class MistralImageSearch:
         self.client = Mistral(api_key=mistral_api_key)
         logger.info("🔍 MistralImageSearch initialized")
     
-    def annotate_image(self, image_path: str) -> str:
+    def annotate_image(self, image_path: str = None, image_bytes: bytes = None) -> str:
         """
         Annotate image using Mistral AI with SAME schema as ingestion.
         
@@ -43,14 +43,21 @@ class MistralImageSearch:
         
         Args:
             image_path: Path to image file
+            image_bytes: Raw image bytes (optional, avoids file read)
             
         Returns:
             Annotation summary text
         """
         try:
             # Load and encode image
-            with open(image_path, 'rb') as f:
-                image_data = f.read()
+            if image_bytes:
+                image_data = image_bytes
+            elif image_path:
+                with open(image_path, 'rb') as f:
+                    image_data = f.read()
+            else:
+                logger.error("No image provided to annotate_image")
+                return ""
             
             base64_image = base64.b64encode(image_data).decode('utf-8')
             
