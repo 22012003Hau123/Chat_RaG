@@ -38,6 +38,219 @@ function resetSession() {
     addMessage("Bonjour! Je suis votre assistant IA pour les documents Auchan. Comment puis-je vous aider ?", false);
 }
 
+// ============================================================================
+// CONVERSATION HISTORY MANAGEMENT
+// ============================================================================
+
+let currentConversationId = localStorage.getItem('current_conversation_id') || null;
+
+// Load conversations on page load
+document.addEventListener('DOMContentLoaded', loadConversations);
+
+async function loadConversations() {
+    try {
+        const response = await fetch('/api/conversations');
+        const data = await response.json();
+        renderConversationList(data.conversations);
+    } catch (error) {
+        console.error('Error loading conversations:', error);
+    }
+}
+
+function renderConversationList(conversations) {
+    const listEl = document.getElementById('conversationList');
+    if (!listEl) return;
+    
+    // Group by date
+    const today = new Date().toDateString();
+    const yesterday = new Date(Date.now() - 86400000).toDateString();
+    
+    const groups = {
+        'Today': [],
+        'Yesterday': [],
+        'Previous': []
+    };
+    
+    conversations.forEach(conv => {
+        const convDate = new Date(conv.updated_at || conv.created_at).toDateString();
+        if (convDate === today) {
+            groups['Today'].push(conv);
+        } else if (convDate === yesterday) {
+            groups['Yesterday'].push(conv);
+        } else {
+            groups['Previous'].push(conv);
+        }
+    });
+    
+    let html = '';
+    for (const [label, convs] of Object.entries(groups)) {
+        if (convs.length === 0) continue;
+        
+        html += `<div class="date-group">`;
+        html += `<div class="date-label">${label}</div>`;
+        
+        convs.forEach(conv => {
+            const isActive = conv.id === currentConversationId ? 'active' : '';
+            html += `
+                <div class="conversation-item ${isActive}" onclick="loadConversation('${conv.id}')">
+                    <span class="conversation-title">${escapeHtml(conv.title)}</span>
+                    <div class="conversation-actions">
+                        <button class="conversation-edit" onclick="event.stopPropagation(); renameConversation('${conv.id}', '${escapeHtml(conv.title)}')" title="Rename">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+                        </button>
+                        <button class="conversation-delete" onclick="event.stopPropagation(); deleteConversation('${conv.id}')" title="Delete">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+                        </button>
+                    </div>
+                </div>
+            `;
+        });
+        
+        html += `</div>`;
+    }
+    
+    listEl.innerHTML = html || '<div style="color: rgba(255,255,255,0.5); padding: 16px; text-align: center;">No conversations yet</div>';
+}
+
+function escapeHtml(text) {
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+}
+
+async function createNewChat() {
+    try {
+        const response = await fetch('/api/conversations', { method: 'POST' });
+        const data = await response.json();
+        
+        currentConversationId = data.id;
+        localStorage.setItem('current_conversation_id', data.id);
+        
+        // Clear chat and reset session
+        chatMessages.innerHTML = '';
+        addMessage("Bonjour! Je suis votre assistant IA pour les documents Auchan. Comment puis-je vous aider ?", false);
+        
+        // Reload sidebar
+        loadConversations();
+    } catch (error) {
+        console.error('Error creating conversation:', error);
+    }
+}
+
+async function loadConversation(convId) {
+    try {
+        const response = await fetch(`/api/conversations/${convId}`);
+        const data = await response.json();
+        
+        currentConversationId = convId;
+        localStorage.setItem('current_conversation_id', convId);
+        
+        // Clear and load messages
+        chatMessages.innerHTML = '';
+        
+        data.messages.forEach(msg => {
+            addMessage(msg.content, msg.role === 'user');
+        });
+        
+        // Update sidebar highlight
+        loadConversations();
+    } catch (error) {
+        console.error('Error loading conversation:', error);
+    }
+}
+
+async function deleteConversation(convId) {
+    // Find the conversation item
+    const items = document.querySelectorAll('.conversation-item');
+    for (const item of items) {
+        if (item.onclick && item.onclick.toString().includes(convId)) {
+            const actionsDiv = item.querySelector('.conversation-actions');
+            if (actionsDiv) {
+                // Replace with confirm buttons
+                actionsDiv.innerHTML = `
+                    <span style="font-size: 11px; color: rgba(255,255,255,0.7);">Delete?</span>
+                    <button class="confirm-yes" onclick="event.stopPropagation(); confirmDelete('${convId}')">Yes</button>
+                    <button class="confirm-no" onclick="event.stopPropagation(); loadConversations()">No</button>
+                `;
+            }
+            break;
+        }
+    }
+}
+
+async function confirmDelete(convId) {
+    try {
+        await fetch(`/api/conversations/${convId}`, { method: 'DELETE' });
+        
+        if (convId === currentConversationId) {
+            currentConversationId = null;
+            localStorage.removeItem('current_conversation_id');
+            chatMessages.innerHTML = '';
+            addMessage("Bonjour! Je suis votre assistant IA pour les documents Auchan. Comment puis-je vous aider ?", false);
+        }
+        
+        loadConversations();
+    } catch (error) {
+        console.error('Error deleting conversation:', error);
+    }
+}
+
+function toggleSidebar() {
+    const sidebar = document.getElementById('sidebar');
+    sidebar.classList.toggle('open');
+}
+
+async function renameConversation(convId, currentTitle) {
+    // Find the conversation item and make title editable
+    const items = document.querySelectorAll('.conversation-item');
+    for (const item of items) {
+        if (item.onclick.toString().includes(convId)) {
+            const titleSpan = item.querySelector('.conversation-title');
+            if (titleSpan) {
+                // Replace span with input
+                const input = document.createElement('input');
+                input.type = 'text';
+                input.value = currentTitle;
+                input.className = 'conversation-title-input';
+                input.style.cssText = 'background: rgba(255,255,255,0.1); border: 1px solid rgba(255,255,255,0.3); border-radius: 4px; color: white; padding: 4px 8px; width: 100%; font-size: 14px;';
+                
+                titleSpan.replaceWith(input);
+                input.focus();
+                input.select();
+                
+                // Save on Enter or blur
+                const saveTitle = async () => {
+                    const newTitle = input.value.trim();
+                    if (newTitle && newTitle !== currentTitle) {
+                        try {
+                            await fetch(`/api/conversations/${convId}/title`, {
+                                method: 'PUT',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({ title: newTitle })
+                            });
+                        } catch (error) {
+                            console.error('Error renaming:', error);
+                        }
+                    }
+                    loadConversations();
+                };
+                
+                input.addEventListener('keydown', (e) => {
+                    if (e.key === 'Enter') {
+                        e.preventDefault();
+                        saveTitle();
+                    } else if (e.key === 'Escape') {
+                        loadConversations();
+                    }
+                });
+                
+                input.addEventListener('blur', saveTitle);
+            }
+            break;
+        }
+    }
+}
+
 function addMessage(text, isUser, sources = null) {
     const messageDiv = document.createElement('div');
     messageDiv.className = `message ${isUser ? 'user' : 'assistant'}`;

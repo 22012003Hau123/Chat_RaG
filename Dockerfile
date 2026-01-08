@@ -33,11 +33,12 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy the rest of the application
 COPY . .
 
-# Create directories for uploads and temp files
-RUN mkdir -p /app/static/images /app/static/temp_images
+# Create directories for uploads, temp files, and image cache (for ORB search)
+RUN mkdir -p /app/static/images /app/static/temp_images /app/image_cache
 
-# Create user to run app (security best practice, required by some platforms)
-RUN useradd -m -u 1000 user
+# Create user to run app (security best practice)
+RUN useradd -m -u 1000 user && \
+    chown -R user:user /app
 USER user
 
 # Expose port (7860 is default for HF Spaces)

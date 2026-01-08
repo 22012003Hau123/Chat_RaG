@@ -33,7 +33,7 @@ from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_core.documents import Document
 import openai
 from src.document_extractor import DocumentExtractor
-from src.mistral_image_search import MistralImageSearch
+
 
 load_dotenv()
 

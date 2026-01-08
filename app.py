@@ -34,8 +34,8 @@ from pydantic import BaseModel
 from src.rag_chain import RAGChain
 from src.configuration import resolve_config_path
 from src.session_manager import SessionManager
-from src.mistral_image_search import get_mistral_image_search
-
+from src.chat_history import get_chat_history
+from src.orb_image_search import get_orb_image_search
 
 # Global variables to hold RAG chain and session manager
 rag_chain: Optional[RAGChain] = None
@@ -60,11 +60,57 @@ async def lifespan(app: FastAPI):
         print(f"Using configuration: {config_path}")
         rag_chain = RAGChain(config_path=config_path)
         
+        # Initialize ORB Image Search and Sync Cache
+        print("\nInitializing ORB Image Search...")
+        orb_searcher = get_orb_image_search()
+        if orb_searcher:
+            # Sync cache on startup
+            print("🔄 Syncing image cache from Supabase...")
+            orb_searcher.sync_from_supabase()
+            orb_searcher.build_cache_from_local()
+        
         # Initialize SessionManager
         print("\nInitializing Session Manager...")
         session_manager = SessionManager(
             cleanup_interval_minutes=10
         )
+        
+        # Cleanup old chat history (older than 30 days)
+        # Start background scheduler to run daily
+        import threading
+        import time as time_module
+        
+        def background_tasks():
+            while True:
+                # 1. Daily Chat Cleanup (>30 days)
+                try:
+                    chat_history = get_chat_history()
+                    if chat_history:
+                        cleaned = chat_history.cleanup_old_conversations(days=30)
+                        if cleaned > 0:
+                            print(f"🧹 Auto-cleaned {cleaned} old conversations (>30 days)")
+                except Exception as e:
+                    print(f"⚠️ Cleanup error: {e}")
+                
+                # 2. Hourly ORB Cache Sync
+                try:
+                    # Sync every check (we sleep for 1 hour approx, can refine logic if needed)
+                    # For simplicity, we sync image cache every time this loop runs
+                    # Actually, let's run this loop every hour, and cleanup logic can check time or just run hourly (harmless if no old chats)
+                    orb = get_orb_image_search()
+                    if orb:
+                        # Lightweight check
+                        orb.sync_from_supabase()
+                        orb.build_cache_from_local()
+                except Exception as e:
+                     print(f"⚠️ ORB Sync error: {e}")
+
+                # Sleep 1 hour (3600s). Chat cleanup running hourly is fine (idempotent)
+                time_module.sleep(3600)
+        
+        cleanup_thread = threading.Thread(target=background_tasks, daemon=True)
+        cleanup_thread.start()
+        print("⏰ Background scheduler started (Chat Cleanup + Image Sync)")
         
         print("\nRAG system ready!")
     except Exception as e:
@@ -161,6 +207,83 @@ async def health_check():
         "embedding_model": "ready",
         "llm": "configured"
     }
+
+
+# ============================================================================
+# Conversation History API Endpoints
+# ============================================================================
+
+@app.get("/api/conversations")
+async def list_conversations():
+    """Get list of all conversations."""
+    chat_history = get_chat_history()
+    if not chat_history:
+        raise HTTPException(status_code=503, detail="Chat history service not available")
+    
+    conversations = chat_history.list_conversations()
+    return {"conversations": conversations}
+
+
+@app.get("/api/conversations/{conversation_id}")
+async def get_conversation(conversation_id: str):
+    """Get a specific conversation with all messages."""
+    chat_history = get_chat_history()
+    if not chat_history:
+        raise HTTPException(status_code=503, detail="Chat history service not available")
+    
+    data = chat_history.get_conversation(conversation_id)
+    if not data:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+    
+    return data
+
+
+@app.post("/api/conversations")
+async def create_conversation(title: str = "New Chat"):
+    """Create a new conversation."""
+    chat_history = get_chat_history()
+    if not chat_history:
+        raise HTTPException(status_code=503, detail="Chat history service not available")
+    
+    conv_id = chat_history.create_conversation(title)
+    if not conv_id:
+        raise HTTPException(status_code=500, detail="Failed to create conversation")
+    
+    return {"id": conv_id, "title": title}
+
+
+@app.delete("/api/conversations/{conversation_id}")
+async def delete_conversation(conversation_id: str):
+    """Delete a conversation and all its messages."""
+    chat_history = get_chat_history()
+    if not chat_history:
+        raise HTTPException(status_code=503, detail="Chat history service not available")
+    
+    success = chat_history.delete_conversation(conversation_id)
+    if not success:
+        raise HTTPException(status_code=500, detail="Failed to delete conversation")
+    
+    return {"status": "deleted", "id": conversation_id}
+
+
+@app.put("/api/conversations/{conversation_id}/title")
+async def update_conversation_title(conversation_id: str, request: Request):
+    """Update conversation title."""
+    chat_history = get_chat_history()
+    if not chat_history:
+        raise HTTPException(status_code=503, detail="Chat history service not available")
+    
+    body = await request.json()
+    new_title = body.get("title", "")
+    
+    if not new_title:
+        raise HTTPException(status_code=400, detail="Title is required")
+    
+    success = chat_history.update_title(conversation_id, new_title)
+    if not success:
+        raise HTTPException(status_code=500, detail="Failed to update title")
+    
+    return {"status": "updated", "id": conversation_id, "title": new_title}
 
 
 # Helper function for file type detection
@@ -433,6 +556,23 @@ Note: Utilisez l'historique de conversation pour comprendre le contexte de cette
             method=method,
             session=session
         )
+        
+        # Save messages to database for chat history
+        try:
+            chat_history = get_chat_history()
+            if chat_history:
+                conv_id = session_id_str
+                existing = chat_history.get_conversation(conv_id)
+                if not existing:
+                    title = chat_history.generate_title_from_message(question)
+                    chat_history.supabase.table("chat_conversations").insert({
+                        "id": conv_id,
+                        "title": title
+                    }).execute()
+                chat_history.add_message(conv_id, "user", question)
+                chat_history.add_message(conv_id, "assistant", result["answer"])
+        except Exception as save_err:
+            print(f"⚠️ Chat history save error: {save_err}")
         
         return AnswerResponse(
             answer=result["answer"],

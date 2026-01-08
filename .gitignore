@@ -18,3 +18,4 @@ logs/
 batch_outputs/
 mistral_outputs/
 extracted_images/
+image_cache/
