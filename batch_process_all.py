@@ -340,6 +340,18 @@ try:
                         
                         if img_url:
                             img_data['public_url'] = img_url
+                            
+                            # AUTO-CACHE: Save locally and compute ORB features
+                            try:
+                                from pathlib import Path
+                                cache_dir = Path("./image_cache")
+                                cache_dir.mkdir(exist_ok=True)
+                                local_path = cache_dir / img_filename
+                                with open(local_path, 'wb') as cache_file:
+                                    cache_file.write(img_bytes)
+                                logger.info(f"    → Cached locally: {img_filename}")
+                            except Exception as cache_err:
+                                logger.warning(f"    → Failed to cache locally: {cache_err}")
                     except Exception as e:
                         logger.error(f"  Failed to upload image {img_data.get('id')}: {e}")
                         

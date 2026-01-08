@@ -237,7 +237,7 @@ async def ask_question(
         )
         
         if is_pure_image_search:
-            print("🔍 MISTRAL IMAGE SEARCH: Semantic annotation matching")
+            print("🔍 IMAGE SEARCH: Feature matching")
             
             try:
                 from src.vision_analyzer import save_uploaded_image, cleanup_temp_image
@@ -245,36 +245,46 @@ async def ask_question(
                 
                 temp_file_path = save_uploaded_image(image)
                 
-                # Get Mistral API key
-                mistral_key = os.getenv('MISTRAL_API_KEY')
-                if not mistral_key:
-                    print("⚠️ MISTRAL_API_KEY not found, falling back to normal search")
-                else:
-                    # Mistral annotation search
-                    searcher = get_mistral_image_search(mistral_key)
-                    match = searcher.search_by_annotation(temp_file_path, rag_chain)
+                # ORB Image Search (feature matching)
+                try:
+                    from src.orb_image_search import get_orb_image_search
+                    orb_searcher = get_orb_image_search()
                     
-                    cleanup_temp_image(temp_file_path)
-                    
-                    if match:
-                        return AnswerResponse(
-                            answer=f"""✅ Image trouvée!
-
-**Document:** {match['doc_name']}
-**Image:** [Voir l'image]({match['image_url']})
-
-**Annotation:** {match['annotation']}""",
-                            sources=match['full_result'].get('sources', []),
-                            method_used="mistral_annotation_search",
-                            session_id=session_id_str
-                        )
+                    if orb_searcher:
+                        # Build ORB cache if not exists
+                        if len(orb_searcher.features_cache) == 0:
+                            print("📥 Building ORB cache from local images...")
+                            orb_searcher.build_cache_from_local()
+                        
+                        matches = orb_searcher.search(temp_file_path, top_k=1)
+                        
+                        cleanup_temp_image(temp_file_path)
+                        
+                        if matches:
+                            best_match = matches[0]
+                            source_link = f" **Source:** [Voir le document]({best_match['source_url']})" if best_match.get('source_url') else ""
+                            return AnswerResponse(
+                                answer=f"""✅ Image trouvée!
+**Document:** {best_match['doc_name']} **Image:** [Voir l'image]({best_match['image_url']}){source_link}""",
+                                sources=[best_match['doc_name']],
+                                method_used="orb_feature_matching",
+                                session_id=session_id_str
+                            )
+                        else:
+                            return AnswerResponse(
+                                answer="❌ Aucune image correspondante trouvée.",
+                                sources=[],
+                                method_used="orb_feature_matching",
+                                session_id=session_id_str
+                            )
                     else:
-                        return AnswerResponse(
-                            answer="❌ Aucune image correspondante trouvée.",
-                            sources=[],
-                            method_used="mistral_annotation_search",
-                            session_id=session_id_str
-                        )
+                        print("⚠️ ORB searcher not available")
+                        cleanup_temp_image(temp_file_path)
+                except Exception as e:
+                    print(f"⚠️ ORB search error: {e}")
+                    import traceback
+                    traceback.print_exc()
+                    cleanup_temp_image(temp_file_path)
             except Exception as e:
                 print(f"⚠️ Mistral search error: {e}")
                 import traceback

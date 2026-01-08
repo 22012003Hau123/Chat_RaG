@@ -11,11 +11,16 @@ Flow:
 4. Return image + document info
 """
 
-import logging
+import os
 import re
-from typing import Optional, Dict, List
-from PIL import Image
+import json
 import base64
+import logging
+from typing import Optional, Dict
+from mistralai import Mistral
+import requests
+import img2pdf
+from PIL import Image
 from io import BytesIO
 
 logger = logging.getLogger(__name__)
@@ -33,13 +38,15 @@ class MistralImageSearch:
         """
         from mistralai import Mistral
         self.client = Mistral(api_key=mistral_api_key)
+        self.api_key = mistral_api_key  # Store API key for direct use with OCR API
         logger.info("🔍 MistralImageSearch initialized")
     
     def annotate_image(self, image_path: str = None, image_bytes: bytes = None) -> str:
         """
-        Annotate image using Mistral AI with SAME schema as ingestion.
+        Annotate image using Mistral OCR API (converted to PDF for consistency).
         
-        Uses structured output to match pdf.py annotation format exactly.
+        Wraps image in PDF so we can use OCR API - ensures IDENTICAL
+        annotation style as document ingestion.
         
         Args:
             image_path: Path to image file
@@ -49,7 +56,7 @@ class MistralImageSearch:
             Annotation summary text
         """
         try:
-            # Load and encode image
+            # Load image
             if image_bytes:
                 image_data = image_bytes
             elif image_path:
@@ -59,15 +66,29 @@ class MistralImageSearch:
                 logger.error("No image provided to annotate_image")
                 return ""
             
-            base64_image = base64.b64encode(image_data).decode('utf-8')
+            # Convert image to PDF so we can use OCR API
+            logger.info("Converting image to PDF for OCR consistency...")
             
-            # Define EXACT SAME schema as pdf.py (lines 396-414)
+            try:
+                pdf_bytes = img2pdf.convert(image_data)
+            except Exception as e:
+                logger.warning(f"img2pdf failed: {e}, using PIL fallback")
+                img = Image.open(BytesIO(image_data))
+                if img.mode not in ('RGB', 'L'):
+                    img = img.convert('RGB')
+                pdf_buffer = BytesIO()
+                img.save(pdf_buffer, 'PDF', resolution=100.0)
+                pdf_bytes = pdf_buffer.getvalue()
+            
+            base64_pdf = base64.b64encode(pdf_bytes).decode('utf-8')
+            
+            # Define schema (same as ingestion)
             annotation_schema = {
                 "type": "object",
                 "properties": {
                     "image_type": {
                         "type": "string",
-                        "description": "The type of the image (e.g., chart, diagram, photo, interface, screenshot)"
+                        "description": "The type of the image (e.g., product, chart, diagram, photo)"
                     },
                     "short_description": {
                         "type": "string",
@@ -75,54 +96,62 @@ class MistralImageSearch:
                     },
                     "summary": {
                         "type": "string",
-                        "description": "A detailed summary of the image content, including visible text, UI elements, and key information"
+                        "description": "A detailed summary of the image content"
                     }
                 },
                 "required": ["image_type", "short_description", "summary"],
                 "additionalProperties": False
             }
             
-            # Call Mistral Vision API with structured output
-            response = self.client.chat.complete(
-                model="pixtral-12b-2409",
-                messages=[
-                    {
-                        "role": "user",
-                        "content": [
-                            {
-                                "type": "text",
-                                "text": "Analyze this image and provide a structured annotation. Focus on: type of image, brief description, and detailed summary including all visible text, UI components, and key elements."
-                            },
-                            {
-                                "type": "image_url",
-                                "image_url": f"data:image/jpeg;base64,{base64_image}"
-                            }
-                        ]
-                    }
-                ],
-                response_format={
+            # Use OCR API (same as ingestion!)
+            api_url = "https://api.mistral.ai/v1/ocr"
+            headers = {
+                "Content-Type": "application/json",
+                "Authorization": f"Bearer {self.api_key}",
+            }
+            
+            payload = {
+                "model": "mistral-ocr-latest",
+                "document": {
+                    "type": "document_url",
+                    "document_url": f"data:application/pdf;base64,{base64_pdf}"
+                },
+                "bbox_annotation_format": {
                     "type": "json_schema",
                     "json_schema": {
-                        "name": "image_annotation",
                         "schema": annotation_schema,
+                        "name": "bbox_annotation",
                         "strict": True
                     }
                 }
-            )
+            }
             
-            # Parse JSON response
-            import json
-            annotation_json = json.loads(response.choices[0].message.content)
+            response = requests.post(api_url, json=payload, headers=headers, timeout=60)
             
-            # Extract summary (same format as ingestion)
-            summary = annotation_json.get("summary", "")
+            if response.status_code != 200:
+                logger.error(f"OCR API error {response.status_code}: {response.text[:200]}")
+                return ""
             
-            logger.info(f"✓ Image annotated: {annotation_json.get('image_type')} - {len(summary)} chars")
+            ocr_response = response.json()
             
-            return summary
+            # Extract annotation
+            pages = ocr_response.get("pages", [])
+            if pages:
+                page = pages[0]
+                bboxes = page.get("bboxes", [])
+                if bboxes:
+                    bbox = bboxes[0]
+                    annotation_obj = bbox.get("annotation", {})
+                    summary = annotation_obj.get("summary", "")
+                    if summary:
+                        logger.info(f"✓ OCR annotation: {summary[:100]}...")
+                        return summary
+            
+            logger.warning("No annotation found in OCR response")
+            return ""
             
         except Exception as e:
-            logger.error(f"Error annotating image: {e}")
+            logger.error(f"Error in annotate_image: {e}")
             import traceback
             traceback.print_exc()
             return ""
@@ -176,7 +205,7 @@ class MistralImageSearch:
                 
                 if urls:
                     image_url = urls[0]
-                    doc_match = re.search(r'/([^/]+)_img-\d+\.(png|jpg|jpeg)', image_url)
+                    doc_match = re.search(r'/([^/]+)_page\d+_img\d+\.(png|jpg|jpeg)', image_url)
                     doc_name = doc_match.group(1) if doc_match else "Unknown"
                     
                     logger.info(f"✓ Found image: {image_url[:80]}...")
@@ -184,7 +213,7 @@ class MistralImageSearch:
                     return {
                         'image_url': image_url,
                         'doc_name': doc_name,
-                        'annotation': annotation[:200],
+                        'annotation': annotation,
                         'full_result': result
                     }
             
@@ -198,6 +227,7 @@ class MistralImageSearch:
             return None
 
 
+# Factory function for app.py import
 def get_mistral_image_search(mistral_api_key: str) -> MistralImageSearch:
     """Create MistralImageSearch instance."""
     return MistralImageSearch(mistral_api_key)
