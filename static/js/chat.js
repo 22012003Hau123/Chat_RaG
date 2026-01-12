@@ -387,7 +387,7 @@ async function sendMessage() {
     }
     
     questionInput.value = '';
-    
+    resetInputHeight();  // Reset textarea height after sending    
     // Disable input while processing
     sendButton.disabled = true;
     questionInput.disabled = true;
@@ -554,6 +554,21 @@ function clearImagePreview() {
 }
 
 // ============= INITIALIZATION =============
+
+// Auto-resize textarea as user types
+function autoResizeTextarea() {
+    questionInput.style.height = 'auto';  // Reset height
+    const newHeight = Math.min(questionInput.scrollHeight, 200);  // Max 200px
+    questionInput.style.height = newHeight + 'px';
+}
+
+// Listen for input to auto-resize
+questionInput.addEventListener('input', autoResizeTextarea);
+
+// Reset height after sending message
+function resetInputHeight() {
+    questionInput.style.height = '44px';  // Reset to min-height
+}
 
 // Focus input on load
 questionInput.focus();

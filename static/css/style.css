@@ -487,11 +487,12 @@ body {
     font-size: 14px;
     font-family: inherit;
     outline: none;
-    transition: border-color 0.3s;
-    resize: vertical;
+    transition: border-color 0.3s, height 0.1s ease;
+    resize: none;  /* Disable manual resize, use auto-resize */
     min-height: 44px;
-    max-height: 120px;
-    line-height: 1.4;
+    max-height: 200px;  /* Allow up to 200px height */
+    line-height: 1.5;
+    overflow-y: auto;
 }
 
 #questionInput:focus {
