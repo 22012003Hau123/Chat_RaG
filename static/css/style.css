@@ -886,3 +886,220 @@ body {
     opacity: 0.5;
     cursor: not-allowed;
 }
+
+/* ============================================================================
+   UPLOAD MODAL TABS
+   ============================================================================ */
+
+.upload-tabs {
+    display: flex;
+    gap: 0;
+    margin-bottom: 20px;
+    border-bottom: 2px solid #e5e7eb;
+}
+
+.upload-tab {
+    flex: 1;
+    padding: 12px 20px;
+    background: transparent;
+    border: none;
+    cursor: pointer;
+    font-size: 14px;
+    font-weight: 500;
+    color: #666;
+    transition: all 0.3s;
+    border-bottom: 2px solid transparent;
+    margin-bottom: -2px;
+}
+
+.upload-tab:hover {
+    color: #1e3a8a;
+    background: rgba(30, 58, 138, 0.05);
+}
+
+.upload-tab.active {
+    color: #1e3a8a;
+    border-bottom-color: #1e3a8a;
+    background: transparent;
+}
+
+/* Tab SVG icons */
+.upload-tab svg {
+    vertical-align: middle;
+    margin-right: 6px;
+}
+
+/* Modal title with icon */
+.modal-title {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    color: #1e3a8a;
+    margin-bottom: 20px;
+}
+
+.modal-title svg {
+    flex-shrink: 0;
+}
+
+/* Upload icon in drag area */
+.upload-icon {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    margin-bottom: 10px;
+}
+
+.upload-icon svg {
+    opacity: 0.9;
+    transition: transform 0.3s, opacity 0.3s;
+}
+
+.upload-placeholder:hover .upload-icon svg {
+    transform: translateY(-3px);
+    opacity: 1;
+}
+
+/* Submit button with icon */
+.upload-submit-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+}
+
+.upload-submit-btn svg {
+    flex-shrink: 0;
+}
+
+.tab-content {
+    animation: fadeIn 0.3s ease;
+}
+
+/* ============================================================================
+   TEXT INPUT FORM STYLES
+   ============================================================================ */
+
+.text-form {
+    display: flex;
+    flex-direction: column;
+    gap: 0;
+}
+
+.text-form .form-group {
+    margin-bottom: 15px;
+}
+
+.text-form label {
+    display: block;
+    margin-bottom: 6px;
+    font-weight: 500;
+    font-size: 14px;
+    color: #333;
+}
+
+.text-form .required {
+    color: #ef4444;
+}
+
+.text-form input,
+.text-form textarea {
+    width: 100%;
+    padding: 10px 14px;
+    border: 2px solid #e0e0e0;
+    border-radius: 8px;
+    font-size: 14px;
+    font-family: inherit;
+    transition: border-color 0.3s, box-shadow 0.3s;
+    background: white;
+}
+
+.text-form input:focus,
+.text-form textarea:focus {
+    outline: none;
+    border-color: #1e3a8a;
+    box-shadow: 0 0 0 3px rgba(30, 58, 138, 0.1);
+}
+
+.text-form input[readonly] {
+    background: #f5f5f5;
+    color: #666;
+    cursor: not-allowed;
+}
+
+.text-form textarea {
+    resize: vertical;
+    min-height: 150px;
+    max-height: 300px;
+}
+
+.text-status {
+    padding: 10px 14px;
+    border-radius: 8px;
+    margin-bottom: 15px;
+    font-size: 14px;
+    display: none;
+}
+
+.text-status.loading {
+    display: block;
+    background: #e8f4fd;
+    color: #1e3a8a;
+    border-left: 4px solid #1e3a8a;
+}
+
+.text-status.success {
+    display: block;
+    background: #dcfce7;
+    color: #166534;
+    border-left: 4px solid #22c55e;
+}
+
+.text-status.error {
+    display: block;
+    background: #fef2f2;
+    color: #991b1b;
+    border-left: 4px solid #ef4444;
+}
+
+/* ============================================================================
+   FIX ROUNDED CORNER OVERFLOW ISSUES
+   ============================================================================ */
+
+.sidebar {
+    overflow: hidden;
+}
+
+.sidebar-content {
+    overflow-y: auto;
+    overflow-x: hidden;
+}
+
+.chat-container {
+    overflow: hidden;
+}
+
+.chat-messages {
+    overflow-y: auto;
+    overflow-x: hidden;
+}
+
+.upload-modal-content {
+    overflow: hidden;
+}
+
+/* Ensure chat header doesn't show white corners */
+.chat-header {
+    border-radius: 0 12px 0 0;
+}
+
+/* When sidebar is present, header needs different radius */
+.app-container .chat-container .chat-header {
+    border-radius: 0 12px 0 0;
+}
+
+/* Bottom input area rounded corners */
+.chat-input-container {
+    border-radius: 0 0 12px 0;
+    background: white;
+}

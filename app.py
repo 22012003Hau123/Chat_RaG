@@ -687,6 +687,127 @@ async def upload_document(file: UploadFile = File(...)):
                 print(f"Warning: Could not delete temp file {temp_file}: {e}")
 
 
+@app.post("/upload-text")
+async def upload_text(request: Request):
+    """
+    Upload and process raw text content.
+    
+    Accepts text directly (copy-paste) with metadata (title, email, date).
+    Chunks the text, embeds it, and inserts to Supabase.
+    """
+    if not rag_chain:
+        raise HTTPException(status_code=503, detail="RAG system not initialized")
+    
+    try:
+        data = await request.json()
+    except Exception as e:
+        raise HTTPException(status_code=400, detail="Invalid JSON payload")
+    
+    text = data.get("text", "").strip()
+    title = data.get("title", "").strip()
+    email = data.get("email", "").strip()
+    date = data.get("date", "").strip()
+    
+    # Validation
+    if not text:
+        raise HTTPException(status_code=400, detail="Text content is required")
+    if not title:
+        raise HTTPException(status_code=400, detail="Title is required")
+    if not email:
+        raise HTTPException(status_code=400, detail="Email is required")
+    if len(text) < 10:
+        raise HTTPException(status_code=400, detail="Text content is too short (minimum 10 characters)")
+    
+    # Create virtual filename for storage metadata
+    # Format: title_email_date.txt (sanitize special chars)
+    import re
+    safe_title = re.sub(r'[^\w\s-]', '', title).strip().replace(' ', '_')[:50]
+    safe_email = email.split('@')[0][:20]  # Use only the part before @
+    virtual_filename = f"{safe_title}_{safe_email}_{date.replace('/', '-')}.txt"
+    
+    print(f"\n{'='*60}")
+    print(f"PROCESSING TEXT UPLOAD")
+    print(f"Title: {title}")
+    print(f"Email: {email}")
+    print(f"Date: {date}")
+    print(f"Virtual filename: {virtual_filename}")
+    print(f"Text length: {len(text)} characters")
+    print(f"{'='*60}\n")
+    
+    try:
+        from langchain_text_splitters import RecursiveCharacterTextSplitter
+        from openai import OpenAI
+        from supabase import create_client
+        
+        # Initialize clients
+        openai_client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+        supabase_key = os.getenv("SUPABASE_KEY") or os.getenv("SUPABASE_SERVICE_ROLE_KEY")
+        supabase = create_client(
+            os.getenv("SUPABASE_URL"),
+            supabase_key
+        )
+        
+        # Chunk the text
+        text_splitter = RecursiveCharacterTextSplitter(
+            chunk_size=1000,
+            chunk_overlap=200,
+            length_function=len
+        )
+        chunks = text_splitter.split_text(text)
+        print(f"📝 Split into {len(chunks)} chunks")
+        
+        # Generate embeddings for each chunk
+        embedding_model = "text-embedding-3-small"
+        documents_to_insert = []
+        
+        for i, chunk in enumerate(chunks):
+            # Generate embedding
+            response = openai_client.embeddings.create(
+                input=chunk,
+                model=embedding_model
+            )
+            embedding = response.data[0].embedding
+            
+            # Prepare document metadata
+            doc = {
+                "content": chunk,
+                "embedding": embedding,
+                "metadata": {
+                    "source": virtual_filename,
+                    "title": title,
+                    "email": email,
+                    "date": date,
+                    "chunk_index": i,
+                    "total_chunks": len(chunks),
+                    "content_type": "text_paste"
+                }
+            }
+            documents_to_insert.append(doc)
+            print(f"  ✓ Embedded chunk {i+1}/{len(chunks)}")
+        
+        # Insert to Supabase
+        table_name = os.getenv("SUPABASE_TABLE_NAME", "alpagino_documents")
+        
+        for doc in documents_to_insert:
+            supabase.table(table_name).insert(doc).execute()
+        
+        print(f"✅ Inserted {len(documents_to_insert)} documents to Supabase\n")
+        
+        return {
+            "success": True,
+            "filename": virtual_filename,
+            "title": title,
+            "chunks_created": len(documents_to_insert),
+            "message": "Text uploaded and processed successfully"
+        }
+        
+    except Exception as e:
+        print(f"❌ Text upload error: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.get("/chat", response_class=HTMLResponse)
 async def chat_interface(request: Request):
     """Serve the HTML chat interface."""

@@ -681,8 +681,42 @@ function openImageModal(src, alt) {
 
 function openUploadModal() {
     document.getElementById('uploadModal').style.display = 'flex';
+    // Auto-fill date for text tab (French format)
+    const today = new Date();
+    const dateStr = today.toLocaleDateString('fr-FR');
+    const textDateEl = document.getElementById('textDate');
+    if (textDateEl) {
+        textDateEl.value = dateStr;
+    }
+    // Ensure file tab is active by default
+    switchTab('file');
 }
 
+// Switch between File and Text tabs
+function switchTab(tabName) {
+    // Remove active from all tabs
+    document.querySelectorAll('.upload-tab').forEach(tab => {
+        tab.classList.remove('active');
+    });
+    
+    // Hide all tab contents
+    document.querySelectorAll('.tab-content').forEach(content => {
+        content.style.display = 'none';
+    });
+    
+    // Activate selected tab
+    const selectedTab = document.querySelector(`.upload-tab[data-tab="${tabName}"]`);
+    if (selectedTab) {
+        selectedTab.classList.add('active');
+    }
+    
+    // Show selected tab content
+    const tabId = tabName === 'file' ? 'fileTab' : 'textTab';
+    const tabContent = document.getElementById(tabId);
+    if (tabContent) {
+        tabContent.style.display = 'block';
+    }
+}
 
 function resetUploadForm() {
     const uploadArea = document.getElementById('uploadArea');
@@ -695,9 +729,99 @@ function resetUploadForm() {
     `;
 }
 
+function resetTextForm() {
+    document.getElementById('textTitle').value = '';
+    document.getElementById('textEmail').value = '';
+    document.getElementById('textContent').value = '';
+    // Reset date
+    const today = new Date();
+    document.getElementById('textDate').value = today.toLocaleDateString('fr-FR');
+    // Hide status
+    const textStatus = document.getElementById('textStatus');
+    textStatus.className = 'text-status';
+    textStatus.textContent = '';
+}
+
 function closeUploadModal() {
     document.getElementById('uploadModal').style.display = 'none';
     resetUploadForm();
+    resetTextForm();
+}
+
+// Submit text function
+async function submitText() {
+    const title = document.getElementById('textTitle').value.trim();
+    const email = document.getElementById('textEmail').value.trim();
+    const date = document.getElementById('textDate').value;
+    const text = document.getElementById('textContent').value.trim();
+    const textStatus = document.getElementById('textStatus');
+    const submitBtn = document.getElementById('textSubmitBtn');
+    
+    // Validation
+    if (!title) {
+        textStatus.className = 'text-status error';
+        textStatus.textContent = '⚠️ Le titre est requis';
+        return;
+    }
+    if (!email) {
+        textStatus.className = 'text-status error';
+        textStatus.textContent = '⚠️ L\'email est requis';
+        return;
+    }
+    if (!email.includes('@')) {
+        textStatus.className = 'text-status error';
+        textStatus.textContent = '⚠️ Email invalide';
+        return;
+    }
+    if (!text || text.length < 10) {
+        textStatus.className = 'text-status error';
+        textStatus.textContent = '⚠️ Le contenu doit avoir au moins 10 caractères';
+        return;
+    }
+    
+    // Show loading
+    submitBtn.disabled = true;
+    submitBtn.textContent = 'Processing...';
+    textStatus.className = 'text-status loading';
+    textStatus.textContent = '⏳ Traitement en cours...';
+    
+    try {
+        const response = await fetch('/upload-text', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ title, email, date, text })
+        });
+        
+        if (!response.ok) {
+            const error = await response.json();
+            throw new Error(error.detail || 'Upload failed');
+        }
+        
+        const result = await response.json();
+        
+        // Show success
+        textStatus.className = 'text-status success';
+        textStatus.innerHTML = `
+            ✅ <strong>Text ajouté avec succès!</strong><br>
+            📄 ${result.filename}<br>
+            📊 ${result.chunks_created} chunks créés
+        `;
+        
+        // Reset form for new entry
+        document.getElementById('textTitle').value = '';
+        document.getElementById('textContent').value = '';
+        
+        // Change button to allow adding more
+        submitBtn.disabled = false;
+        submitBtn.textContent = 'Add Another Text';
+        
+    } catch (error) {
+        console.error('Text upload error:', error);
+        textStatus.className = 'text-status error';
+        textStatus.textContent = `❌ Erreur: ${error.message}`;
+        submitBtn.disabled = false;
+        submitBtn.textContent = 'Add Text';
+    }
 }
 
 function handleFileSelect(event) {
