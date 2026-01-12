@@ -1085,7 +1085,9 @@ body {
 }
 
 .upload-modal-content {
-    overflow: hidden;
+    overflow: visible;
+    max-height: 90vh;
+    overflow-y: auto;
 }
 
 /* Ensure chat header doesn't show white corners */

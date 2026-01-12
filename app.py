@@ -385,11 +385,21 @@ async def ask_question(
                         
                         if matches:
                             best_match = matches[0]
-                            source_link = f" **Source:** [Voir le document]({best_match['source_url']})" if best_match.get('source_url') else ""
+                            doc_name = best_match['doc_name']
+                            source_url = best_match.get('source_url', '')
+                            source_filename = best_match.get('source_filename', '')
+                            
+                            # Build source for list - use source_url if available
+                            if source_url and source_filename:
+                                source_for_list = f"[{source_filename}]({source_url})"
+                            else:
+                                # No source document found
+                                source_for_list = doc_name
+                            
                             return AnswerResponse(
                                 answer=f"""✅ Image trouvée!
-**Document:** {best_match['doc_name']} **Image:** [Voir l'image]({best_match['image_url']}){source_link}""",
-                                sources=[best_match['doc_name']],
+**Document:** {source_filename or doc_name} **Image:** [Voir l'image]({best_match['image_url']})""",
+                                sources=[source_for_list],
                                 method_used="orb_feature_matching",
                                 session_id=session_id_str
                             )
@@ -718,19 +728,18 @@ async def upload_text(request: Request):
     if len(text) < 10:
         raise HTTPException(status_code=400, detail="Text content is too short (minimum 10 characters)")
     
-    # Create virtual filename for storage metadata
-    # Format: title_email_date.txt (sanitize special chars)
+    # Create filename for storage
+    # Format: Title.txt (sanitize special chars)
     import re
     safe_title = re.sub(r'[^\w\s-]', '', title).strip().replace(' ', '_')[:50]
-    safe_email = email.split('@')[0][:20]  # Use only the part before @
-    virtual_filename = f"{safe_title}_{safe_email}_{date.replace('/', '-')}.txt"
+    txt_filename = f"{safe_title}.txt"
     
     print(f"\n{'='*60}")
     print(f"PROCESSING TEXT UPLOAD")
     print(f"Title: {title}")
     print(f"Email: {email}")
     print(f"Date: {date}")
-    print(f"Virtual filename: {virtual_filename}")
+    print(f"Filename: {txt_filename}")
     print(f"Text length: {len(text)} characters")
     print(f"{'='*60}\n")
     
@@ -747,7 +756,26 @@ async def upload_text(request: Request):
             supabase_key
         )
         
-        # Chunk the text
+        # Step 1: Upload .txt file to Supabase storage (like PDF files)
+        print(f"📤 Uploading {txt_filename} to Supabase storage...")
+        try:
+            file_content = text.encode('utf-8')
+            storage_bucket = supabase.storage.from_('source-documents')
+            
+            # Upload file
+            storage_bucket.upload(
+                path=txt_filename,
+                file=file_content,
+                file_options={"content-type": "text/plain; charset=utf-8", "upsert": "true"}
+            )
+            
+            storage_url = storage_bucket.get_public_url(txt_filename)
+            print(f"✅ Uploaded to: {storage_url}")
+        except Exception as upload_error:
+            print(f"⚠️ Storage upload failed (continuing without): {upload_error}")
+            storage_url = None
+        
+        # Step 2: Chunk the text
         text_splitter = RecursiveCharacterTextSplitter(
             chunk_size=1000,
             chunk_overlap=200,
@@ -756,7 +784,7 @@ async def upload_text(request: Request):
         chunks = text_splitter.split_text(text)
         print(f"📝 Split into {len(chunks)} chunks")
         
-        # Generate embeddings for each chunk
+        # Step 3: Generate embeddings for each chunk
         embedding_model = "text-embedding-3-small"
         documents_to_insert = []
         
@@ -768,12 +796,13 @@ async def upload_text(request: Request):
             )
             embedding = response.data[0].embedding
             
-            # Prepare document metadata
+            # Prepare document metadata (same format as PDF uploads)
             doc = {
                 "content": chunk,
                 "embedding": embedding,
                 "metadata": {
-                    "source": virtual_filename,
+                    "source": txt_filename,  # Same as PDF source
+                    "storage_path": txt_filename,  # For clickable links
                     "title": title,
                     "email": email,
                     "date": date,
@@ -785,7 +814,7 @@ async def upload_text(request: Request):
             documents_to_insert.append(doc)
             print(f"  ✓ Embedded chunk {i+1}/{len(chunks)}")
         
-        # Insert to Supabase
+        # Step 4: Insert to Supabase
         table_name = os.getenv("SUPABASE_TABLE_NAME", "alpagino_documents")
         
         for doc in documents_to_insert:
@@ -795,9 +824,10 @@ async def upload_text(request: Request):
         
         return {
             "success": True,
-            "filename": virtual_filename,
+            "filename": txt_filename,
             "title": title,
             "chunks_created": len(documents_to_insert),
+            "storage_url": storage_url,
             "message": "Text uploaded and processed successfully"
         }
         

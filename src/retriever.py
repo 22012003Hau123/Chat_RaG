@@ -61,6 +61,12 @@ class SupabaseRetriever:
         
         print(f"Using OpenAI embeddings: {self.embedding_model}")
         
+        # Pre-load Cross-Encoder reranker for production performance
+        print("📦 Loading Cross-Encoder reranker...")
+        from sentence_transformers import CrossEncoder
+        self._reranker = CrossEncoder('cross-encoder/ms-marco-MiniLM-L-6-v2')
+        print("✓ Reranker loaded!")
+        
         # Get document count
         doc_count = self.supabase_client.get_document_count()
         print(f"✓ Retriever initialized. Documents in database: {doc_count}")
@@ -288,6 +294,138 @@ class SupabaseRetriever:
         print(f"Selected {len(results)} diverse results")
         return results
 
+    def rerank_search(
+        self,
+        query: str,
+        k: int = 5,
+        fetch_k: int = 20,
+        filter_metadata: Optional[Dict[str, Any]] = None
+    ) -> List[Tuple[Document, float]]:
+        """
+        Search with Cross-Encoder reranking for improved accuracy.
+        
+        This method:
+        1. Fetches more candidates using vector search
+        2. Re-scores each candidate using a Cross-Encoder model
+        3. Returns top-k documents sorted by rerank score
+        
+        Cross-Encoder reads (query, document) pairs and outputs a relevance score,
+        providing much better semantic understanding than vector similarity alone.
+        
+        Args:
+            query: Search query
+            k: Number of final results
+            fetch_k: Number of candidates to fetch initially
+            filter_metadata: Optional metadata filter
+            
+        Returns:
+            List of (Document, rerank_score) tuples
+        """
+        from sentence_transformers import CrossEncoder
+        
+        print(f"\n🔄 Rerank Query: '{query}'")
+        print(f"Fetching {fetch_k} candidates, reranking to top {k}...")
+        
+        # Step 1: Get initial candidates using vector search
+        candidates = self.similarity_search(
+            query=query,
+            k=fetch_k,
+            filter_metadata=filter_metadata
+        )
+        
+        if not candidates:
+            return []
+        
+        # Step 2: Prepare query-document pairs (reranker already loaded at init)
+        pairs = [(query, doc.page_content) for doc, _ in candidates]
+        
+        # Step 3: Get rerank scores
+        print("🧠 Reranking with Cross-Encoder...")
+        rerank_scores = self._reranker.predict(pairs)
+        
+        # Step 5: Combine documents with new scores
+        reranked = list(zip([doc for doc, _ in candidates], rerank_scores))
+        
+        # Step 6: Sort by rerank score (descending)
+        reranked.sort(key=lambda x: x[1], reverse=True)
+        
+        # Step 7: Return top-k
+        results = reranked[:k]
+        
+        print(f"✅ Reranked to {len(results)} results")
+        for i, (doc, score) in enumerate(results[:3]):
+            source = doc.metadata.get('source', 'Unknown')[:30]
+            print(f"  [{i+1}] Score: {score:.4f} | {source}...")
+        
+        return results
+
+    def mmr_rerank_search(
+        self,
+        query: str,
+        k: int = 5,
+        fetch_k: int = 50,
+        mmr_k: int = 20,
+        lambda_mult: float = 0.5,
+        filter_metadata: Optional[Dict[str, Any]] = None
+    ) -> List[Tuple[Document, float]]:
+        """
+        Combined MMR + Rerank search for optimal results.
+        
+        This is the BEST retrieval pipeline:
+        1. Vector search: Fetch many candidates
+        2. MMR: Select diverse subset (avoid duplicates)
+        3. Rerank: Re-score with Cross-Encoder (semantic accuracy)
+        
+        Args:
+            query: Search query
+            k: Number of final results
+            fetch_k: Initial candidates to fetch
+            mmr_k: Number of docs after MMR (before rerank)
+            lambda_mult: MMR balance (0.5 = balanced)
+            filter_metadata: Optional metadata filter
+            
+        Returns:
+            List of (Document, rerank_score) tuples - diverse AND accurate
+        """
+        from sentence_transformers import CrossEncoder
+        
+        print(f"\n🚀 MMR+Rerank Query: '{query}'")
+        print(f"Pipeline: {fetch_k} → MMR({mmr_k}) → Rerank({k})")
+        
+        # Step 1: MMR to get diverse candidates
+        mmr_results = self.mmr_search(
+            query=query,
+            k=mmr_k,
+            fetch_k=fetch_k,
+            lambda_mult=lambda_mult,
+            filter_metadata=filter_metadata
+        )
+        
+        if not mmr_results:
+            return []
+        
+        print(f"📊 MMR selected {len(mmr_results)} diverse docs")
+        
+        # Step 2: Prepare pairs for reranking (reranker already loaded at init)
+        pairs = [(query, doc.page_content) for doc, _ in mmr_results]
+        
+        # Step 3: Get rerank scores
+        print("🧠 Reranking with Cross-Encoder...")
+        rerank_scores = self._reranker.predict(pairs)
+        
+        # Step 5: Combine and sort
+        reranked = list(zip([doc for doc, _ in mmr_results], rerank_scores))
+        reranked.sort(key=lambda x: x[1], reverse=True)
+        
+        # Step 6: Return top-k
+        results = reranked[:k]
+        
+        print(f"✅ Final: {len(results)} docs (diverse + accurate)")
+        for i, (doc, score) in enumerate(results[:3]):
+            source = doc.metadata.get('source', 'Unknown')[:30]
+            print(f"  [{i+1}] Score: {score:.4f} | {source}...")
+        
+        return results
 
 
 def print_results(results: List[Tuple[Document, float]], show_content: bool = True) -> None:

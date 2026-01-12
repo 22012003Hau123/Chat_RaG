@@ -89,7 +89,7 @@ class RAGChain:
         with open(config_path, 'r') as f:
             return yaml.safe_load(f)
     
-    def retrieve(self, question: str, method: str = "similarity") -> List[Document]:
+    def retrieve(self, question: str, method: str = "mmr_rerank") -> List[Document]:
         """
         Retrieve relevant documents for a question.
         
@@ -97,12 +97,14 @@ class RAGChain:
         
         Args:
             question: User's question
-            method: Search method - "similarity" or "mmr"
+            method: Search method - "similarity", "mmr", "rerank", or "mmr_rerank" (default)
             
         Returns:
             List of relevant Document objects
         """
         k = self.retrieval_config.get('top_k', 5)
+        lambda_mult = self.retrieval_config.get('mmr_lambda', 0.5)
+        fetch_k = self.retrieval_config.get('fetch_k', 20)
         
         if method == "similarity":
             results = self.retriever.similarity_search(
@@ -110,16 +112,29 @@ class RAGChain:
                 k=k
             )
         elif method == "mmr":
-            lambda_mult = self.retrieval_config.get('mmr_lambda', 0.5)
-            fetch_k = self.retrieval_config.get('fetch_k', 20)
             results = self.retriever.mmr_search(
                 query=question,
                 k=k,
                 fetch_k=fetch_k,
                 lambda_mult=lambda_mult
             )
+        elif method == "rerank":
+            results = self.retriever.rerank_search(
+                query=question,
+                k=k,
+                fetch_k=fetch_k
+            )
+        elif method == "mmr_rerank":
+            # BEST: Combined MMR + Rerank for diverse AND accurate results
+            results = self.retriever.mmr_rerank_search(
+                query=question,
+                k=k,
+                fetch_k=50,  # Fetch more for better diversity
+                mmr_k=20,    # MMR selects diverse subset
+                lambda_mult=lambda_mult
+            )
         else:
-            raise ValueError(f"Unknown retrieval method: {method}")
+            raise ValueError(f"Unknown retrieval method: {method}. Use: similarity, mmr, rerank, or mmr_rerank")
         
         # Extract just the documents (without scores)
         documents = [doc for doc, score in results]
@@ -406,7 +421,7 @@ class RAGChain:
     def query(
         self, 
         question: str, 
-        method: str = "similarity",
+        method: str = "mmr_rerank",
         return_context: bool = False,
         session: Optional['ConversationSession'] = None
     ) -> Dict[str, Any]:
@@ -490,20 +505,23 @@ class RAGChain:
         seen_sources = set()
         supabase_url_base = os.getenv('SUPABASE_URL')
         
+        from urllib.parse import quote
+        
         for doc in documents:
             source_name = doc.metadata.get('source', 'Unknown')
             if source_name not in seen_sources:
                 seen_sources.add(source_name)
                 
-                # Get Supabase Storage URL
+                # Get Supabase Storage URL (URL encode the filename for spaces/special chars)
                 storage_path = doc.metadata.get('storage_path')
                 if storage_path:
                     # Use existing storage_path from metadata
-                    file_url = f"{supabase_url_base}/storage/v1/object/public/source-documents/{storage_path}"
+                    encoded_path = quote(storage_path, safe='/')
+                    file_url = f"{supabase_url_base}/storage/v1/object/public/source-documents/{encoded_path}"
                 else:
                     # Construct URL from source filename
-                    # Assume files are in source-documents bucket
-                    file_url = f"{supabase_url_base}/storage/v1/object/public/source-documents/{source_name}"
+                    encoded_name = quote(source_name, safe='')
+                    file_url = f"{supabase_url_base}/storage/v1/object/public/source-documents/{encoded_name}"
                 
                 # Create markdown link format: [name](url)
                 unique_sources.append(f"[{source_name}]({file_url})")
@@ -543,9 +561,9 @@ def main():
     parser.add_argument(
         "--method",
         type=str,
-        choices=["similarity", "mmr"],
-        default="similarity",
-        help="Retrieval method (default: similarity)"
+        choices=["similarity", "mmr", "rerank", "mmr_rerank"],
+        default="mmr_rerank",
+        help="Retrieval method (default: mmr_rerank - best quality)"
     )
     parser.add_argument(
         "--show-context",

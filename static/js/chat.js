@@ -279,6 +279,13 @@ function addMessage(text, isUser, sources = null) {
     if (!isUser && typeof marked !== 'undefined') {
         content.innerHTML = marked.parse(text);
         
+        // IMPORTANT: Process all links to open in new tab
+        const links = content.querySelectorAll('a');
+        links.forEach(link => {
+            link.setAttribute('target', '_blank');
+            link.setAttribute('rel', 'noopener noreferrer');
+        });
+        
         // IMPORTANT: Process all images to ensure proper sizing and add click-to-enlarge
         const images = content.querySelectorAll('img');
         images.forEach(img => {

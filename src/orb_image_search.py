@@ -256,20 +256,27 @@ class ORBImageSearch:
                     
                     # Try to find source document URL in 'source-documents' bucket
                     source_url = None
+                    source_filename = None
                     try:
                         files_bucket = self.supabase.storage.from_('source-documents')
-                        for ext in ['.pdf', '.docx', '.pptx']:
+                        # List files in bucket to check which extension exists
+                        bucket_files = files_bucket.list()
+                        bucket_filenames = [f['name'] for f in bucket_files] if bucket_files else []
+                        
+                        for ext in ['.pptx', '.pdf', '.docx']:
                             potential_name = f"{doc_name}{ext}"
-                            # Check if file exists by getting URL (will work even if doesn't exist, but user can try)
-                            source_url = files_bucket.get_public_url(potential_name)
-                            if source_url: # Only break if a URL was actually returned (i.e., not None or empty string)
-                                break  # Use first match
-                    except Exception:
-                        pass
+                            if potential_name in bucket_filenames:
+                                source_url = files_bucket.get_public_url(potential_name)
+                                source_filename = potential_name
+                                logger.info(f"Found source document: {potential_name}")
+                                break
+                    except Exception as e:
+                        logger.warning(f"Error finding source document: {e}")
                     
                     results.append({
                         'filename': filename,
                         'doc_name': doc_name,
+                        'source_filename': source_filename,  # Full filename with extension
                         'score': score,
                         'image_url': url,
                         'source_url': source_url
