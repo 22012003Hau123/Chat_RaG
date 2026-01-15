@@ -35,7 +35,7 @@ from src.rag_chain import RAGChain
 from src.configuration import resolve_config_path
 from src.session_manager import SessionManager
 from src.chat_history import get_chat_history
-from src.orb_image_search import get_orb_image_search
+from src.clip_image_search import get_clip_image_search
 
 # Global variables to hold RAG chain and session manager
 rag_chain: Optional[RAGChain] = None
@@ -60,14 +60,14 @@ async def lifespan(app: FastAPI):
         print(f"Using configuration: {config_path}")
         rag_chain = RAGChain(config_path=config_path)
         
-        # Initialize ORB Image Search and Sync Cache
-        print("\nInitializing ORB Image Search...")
-        orb_searcher = get_orb_image_search()
-        if orb_searcher:
+        # Initialize CLIP Image Search and Sync Cache
+        print("\nInitializing CLIP Image Search...")
+        clip_searcher = get_clip_image_search()
+        if clip_searcher:
             # Sync cache on startup
             print("🔄 Syncing image cache from Supabase...")
-            orb_searcher.sync_from_supabase()
-            orb_searcher.build_cache_from_local()
+            clip_searcher.sync_from_supabase()
+            clip_searcher.build_cache_from_local()
         
         # Initialize SessionManager
         print("\nInitializing Session Manager...")
@@ -92,18 +92,18 @@ async def lifespan(app: FastAPI):
                 except Exception as e:
                     print(f"⚠️ Cleanup error: {e}")
                 
-                # 2. Hourly ORB Cache Sync
+                # 2. Hourly CLIP Cache Sync
                 try:
                     # Sync every check (we sleep for 1 hour approx, can refine logic if needed)
                     # For simplicity, we sync image cache every time this loop runs
                     # Actually, let's run this loop every hour, and cleanup logic can check time or just run hourly (harmless if no old chats)
-                    orb = get_orb_image_search()
-                    if orb:
+                    clip = get_clip_image_search()
+                    if clip:
                         # Lightweight check
-                        orb.sync_from_supabase()
-                        orb.build_cache_from_local()
+                        clip.sync_from_supabase()
+                        clip.build_cache_from_local()
                 except Exception as e:
-                     print(f"⚠️ ORB Sync error: {e}")
+                     print(f"⚠️ CLIP Sync error: {e}")
 
                 # Sleep 1 hour (3600s). Chat cleanup running hourly is fine (idempotent)
                 time_module.sleep(3600)
@@ -368,18 +368,18 @@ async def ask_question(
                 
                 temp_file_path = save_uploaded_image(image)
                 
-                # ORB Image Search (feature matching)
+                # CLIP Image Search (semantic matching)
                 try:
-                    from src.orb_image_search import get_orb_image_search
-                    orb_searcher = get_orb_image_search()
+                    from src.clip_image_search import get_clip_image_search
+                    clip_searcher = get_clip_image_search()
                     
-                    if orb_searcher:
-                        # Build ORB cache if not exists
-                        if len(orb_searcher.features_cache) == 0:
-                            print("📥 Building ORB cache from local images...")
-                            orb_searcher.build_cache_from_local()
+                    if clip_searcher:
+                        # Build CLIP cache if not exists
+                        if len(clip_searcher.embeddings) == 0:
+                            print("📥 Building CLIP cache from local images...")
+                            clip_searcher.build_cache_from_local()
                         
-                        matches = orb_searcher.search(temp_file_path, top_k=1)
+                        matches = clip_searcher.search(temp_file_path, top_k=1)
                         
                         cleanup_temp_image(temp_file_path)
                         
@@ -400,21 +400,21 @@ async def ask_question(
                                 answer=f"""✅ Image trouvée!
 **Document:** {source_filename or doc_name} **Image:** [Voir l'image]({best_match['image_url']})""",
                                 sources=[source_for_list],
-                                method_used="orb_feature_matching",
+                                method_used="clip_semantic_search",
                                 session_id=session_id_str
                             )
                         else:
                             return AnswerResponse(
                                 answer="❌ Aucune image correspondante trouvée.",
                                 sources=[],
-                                method_used="orb_feature_matching",
+                                method_used="clip_semantic_search",
                                 session_id=session_id_str
                             )
                     else:
-                        print("⚠️ ORB searcher not available")
+                        print("⚠️ CLIP searcher not available")
                         cleanup_temp_image(temp_file_path)
                 except Exception as e:
-                    print(f"⚠️ ORB search error: {e}")
+                    print(f"⚠️ CLIP search error: {e}")
                     import traceback
                     traceback.print_exc()
                     cleanup_temp_image(temp_file_path)
