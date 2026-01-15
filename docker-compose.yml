@@ -11,6 +11,6 @@ services:
     volumes:
       - ./data:/app/data  # Persist data (optional)
       - ./logs:/app/logs  # Persist logs
-      - ./image_cache:/app/image_cache  # Persist ORB images and features
+      - ./image_cache:/app/image_cache  # Persist CLIP images and embeddings
       - ./static/images:/app/static/images # Persist uploaded images (optional)
     restart: always

@@ -341,7 +341,7 @@ try:
                         if img_url:
                             img_data['public_url'] = img_url
                             
-                            # AUTO-CACHE: Save locally and compute ORB features
+                            # AUTO-CACHE: Save locally for CLIP embeddings
                             try:
                                 from pathlib import Path
                                 cache_dir = Path("./image_cache")
