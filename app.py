@@ -37,6 +37,11 @@ from src.session_manager import SessionManager
 from src.chat_history import get_chat_history
 from src.clip_image_search import get_clip_image_search
 
+# Email chat services
+from src.email_service import get_email_service
+from src.email_embeddings import get_email_embedding_service
+from src.email_rag_chain import get_email_rag_chain
+
 # Global variables to hold RAG chain and session manager
 rag_chain: Optional[RAGChain] = None
 session_manager: Optional[SessionManager] = None
@@ -214,13 +219,13 @@ async def health_check():
 # ============================================================================
 
 @app.get("/api/conversations")
-async def list_conversations():
-    """Get list of all conversations."""
+async def list_conversations(mode: Optional[str] = None):
+    """Get list of conversations, optionally filtered by mode."""
     chat_history = get_chat_history()
     if not chat_history:
         raise HTTPException(status_code=503, detail="Chat history service not available")
     
-    conversations = chat_history.list_conversations()
+    conversations = chat_history.list_conversations(mode=mode)
     return {"conversations": conversations}
 
 
@@ -239,13 +244,22 @@ async def get_conversation(conversation_id: str):
 
 
 @app.post("/api/conversations")
-async def create_conversation(title: str = "New Chat"):
+async def create_conversation(request: Request):
     """Create a new conversation."""
     chat_history = get_chat_history()
     if not chat_history:
         raise HTTPException(status_code=503, detail="Chat history service not available")
     
-    conv_id = chat_history.create_conversation(title)
+    # Read optional parameters from request body
+    try:
+        body = await request.json()
+    except:
+        body = {}
+    
+    title = body.get("title", "New Chat")
+    mode = body.get("mode", "document")
+    
+    conv_id = chat_history.create_conversation(title, mode)
     if not conv_id:
         raise HTTPException(status_code=500, detail="Failed to create conversation")
     
@@ -286,6 +300,160 @@ async def update_conversation_title(conversation_id: str, request: Request):
     return {"status": "updated", "id": conversation_id, "title": new_title}
 
 
+# ============================================================================
+# Email API Endpoints
+# ============================================================================
+
+@app.get("/api/emails")
+async def list_emails(limit: int = 50):
+    """Get list of all emails."""
+    email_service = get_email_service()
+    if not email_service:
+        raise HTTPException(status_code=503, detail="Email service not available")
+    
+    emails = email_service.list_emails(limit=limit)
+    return {"emails": emails}
+
+
+@app.get("/api/emails/{email_id}")
+async def get_email(email_id: str):
+    """Get a specific email with full content."""
+    email_service = get_email_service()
+    if not email_service:
+        raise HTTPException(status_code=503, detail="Email service not available")
+    
+    email = email_service.get_email(email_id)
+    if not email:
+        raise HTTPException(status_code=404, detail="Email not found")
+    
+    return email
+
+
+@app.post("/api/emails/ingest")
+async def ingest_emails():
+    """Ingest all emails into embeddings for RAG."""
+    email_service = get_email_service()
+    embedding_service = get_email_embedding_service()
+    
+    if not email_service or not embedding_service:
+        raise HTTPException(status_code=503, detail="Email services not available")
+    
+    # Get emails not yet embedded
+    emails = email_service.get_emails_not_yet_embedded()
+    
+    if not emails:
+        return {"message": "All emails already embedded", "ingested": 0}
+    
+    # Ingest them
+    result = embedding_service.ingest_all_emails(emails)
+    
+    return {
+        "message": "Email ingestion complete",
+        "total": result["total_emails"],
+        "successful": result["successful"],
+        "chunks_created": result["total_chunks"]
+    }
+
+
+@app.delete("/api/emails/{email_id}")
+async def delete_email_endpoint(email_id: str):
+    """Delete an email and its embeddings."""
+    try:
+        service = get_email_service()
+        if not service:
+            raise HTTPException(status_code=503, detail="Email service not configured")
+        
+        success = service.delete_email(email_id)
+        if not success:
+            raise HTTPException(status_code=500, detail="Failed to delete email")
+            
+        return {"status": "deleted", "id": email_id}
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error deleting email endpoint: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/emails/stats")
+async def get_email_stats():
+    """Get statistics about email embeddings."""
+    embedding_service = get_email_embedding_service()
+    if not embedding_service:
+        raise HTTPException(status_code=503, detail="Email embedding service not available")
+    
+    return embedding_service.get_embedding_stats()
+
+
+@app.post("/ask-email")
+async def ask_email(
+    question: str = Form(...),
+    session_id: Optional[str] = Form(None),
+    conversation_id: Optional[str] = Form(None)
+):
+    """
+    Email chat endpoint using email RAG.
+    
+    Similar to /ask but queries email embeddings instead of documents.
+    """
+    email_rag = get_email_rag_chain()
+    if not email_rag or session_manager is None:
+        raise HTTPException(status_code=503, detail="Email RAG not initialized")
+    
+    import uuid
+    session_id_str = session_id or str(uuid.uuid4())
+    
+    print(f"\n📧 Email Question: '{question}'")
+    print(f"🆔 Session ID: {session_id_str[:8]}...")
+    
+    # Get or create session
+    session = session_manager.get_or_create_session(session_id_str)
+    
+    try:
+        result = email_rag.query(
+            question=question,
+            k=5,
+            session=session
+        )
+        
+        # Save to chat history
+        try:
+            chat_history = get_chat_history()
+            if chat_history:
+                # Use provided conversation_id (from persistent chat) or fallback to session_id
+                target_id = conversation_id or session_id_str
+                
+                # Ensure conversation exists (create if missing - usually for session fallback)
+                existing = chat_history.get_conversation(target_id)
+                if not existing:
+                    title = f"📧 {chat_history.generate_title_from_message(question)}"
+                    chat_history.supabase.table("chat_conversations").insert({
+                        "id": target_id,
+                        "title": title,
+                        "mode": "email"
+                    }).execute()
+                
+                # Add messages to history
+                chat_history.add_message(target_id, "user", question)
+                chat_history.add_message(target_id, "assistant", result["answer"])
+                
+        except Exception as save_err:
+            print(f"⚠️ Chat history save error: {save_err}")
+        
+        return {
+            "answer": result["answer"],
+            "sources": result["sources"],
+            "method_used": "email_rag",
+            "session_id": session_id_str,
+            "conversation_id": conversation_id or session_id_str
+        }
+        
+    except Exception as e:
+        print(f"Error processing email question: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 # Helper function for file type detection
 def _detect_file_type(filename: str) -> str:
     """
@@ -309,7 +477,8 @@ async def ask_question(
     question: str = Form(...),
     image: Optional[UploadFile] = File(None),
     method: str = Form("mmr"),
-    session_id: Optional[str] = Form(None)
+    session_id: Optional[str] = Form(None),
+    conversation_id: Optional[str] = Form(None)
 ):
     """
     Main question-answering endpoint using RAG with optional image analysis.
@@ -568,19 +737,24 @@ Note: Utilisez l'historique de conversation pour comprendre le contexte de cette
         )
         
         # Save messages to database for chat history
+        # Save to chat history
         try:
             chat_history = get_chat_history()
             if chat_history:
-                conv_id = session_id_str
-                existing = chat_history.get_conversation(conv_id)
-                if not existing:
+                # Use provided conversation_id or fallback to session_id
+                target_id = conversation_id or session_id_str
+                
+                # Ensure conversation exists
+                if not chat_history.get_conversation(target_id):
                     title = chat_history.generate_title_from_message(question)
                     chat_history.supabase.table("chat_conversations").insert({
-                        "id": conv_id,
-                        "title": title
+                        "id": target_id,
+                        "title": title,
+                        "mode": "document"
                     }).execute()
-                chat_history.add_message(conv_id, "user", question)
-                chat_history.add_message(conv_id, "assistant", result["answer"])
+                    
+                chat_history.add_message(target_id, "user", question)
+                chat_history.add_message(target_id, "assistant", result["answer"])
         except Exception as save_err:
             print(f"⚠️ Chat history save error: {save_err}")
         
@@ -588,7 +762,8 @@ Note: Utilisez l'historique de conversation pour comprendre le contexte de cette
             answer=result["answer"],
             sources=result["sources"],
             method_used=method,
-            session_id=session_id_str
+            session_id=session_id_str,
+            conversation_id=conversation_id or session_id_str
         )
         
     except Exception as e:

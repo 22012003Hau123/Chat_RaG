@@ -1106,3 +1106,245 @@ body {
     border-radius: 0 0 12px 0;
     background: white;
 }
+
+/* ============================================================================
+   EMAIL CHAT MODE STYLES
+   ============================================================================ */
+
+/* Mode Switch Container */
+.mode-switch-container {
+    margin-bottom: 12px;
+}
+
+.mode-toggle {
+    width: 100%;
+    padding: 10px 14px;
+    background: linear-gradient(135deg, #3b82f6 0%, #1e40af 100%);
+    color: white;
+    border: none;
+    border-radius: 8px;
+    font-size: 14px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.3s;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.mode-toggle:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 4px 12px rgba(59, 130, 246, 0.4);
+}
+
+.mode-icon {
+    font-size: 16px;
+}
+
+.mode-label {
+    flex: 1;
+    text-align: left;
+}
+
+/* Email mode toggle style */
+.mode-toggle.email-mode {
+    background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%);
+}
+
+/* Email Panel (right sidebar) */
+.email-panel {
+    width: 300px;
+    background: #0f172a;
+    border-radius: 0 12px 12px 0;
+    display: flex;
+    flex-direction: column;
+    flex-shrink: 0;
+    overflow: hidden;
+}
+
+.email-panel-header {
+    padding: 16px;
+    border-bottom: 1px solid rgba(255,255,255,0.1);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+}
+
+.email-panel-header h3 {
+    color: white;
+    font-size: 16px;
+    font-weight: 600;
+    margin: 0;
+}
+
+.email-ingest-btn {
+    background: rgba(255,255,255,0.1);
+    border: none;
+    border-radius: 6px;
+    padding: 6px 10px;
+    font-size: 16px;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.email-ingest-btn:hover {
+    background: rgba(255,255,255,0.2);
+    transform: rotate(90deg);
+}
+
+.email-ingest-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+/* Email List */
+.email-list {
+    flex: 1;
+    overflow-y: auto;
+    padding: 8px;
+}
+
+.email-item {
+    padding: 12px;
+    margin: 6px 0;
+    background: rgba(255,255,255,0.05);
+    border-radius: 8px;
+    cursor: pointer;
+    transition: all 0.2s;
+    border-left: 3px solid transparent;
+}
+
+.email-item:hover {
+    background: rgba(255,255,255,0.1);
+    border-left: 3px solid #0078d4;
+}
+
+.email-from,
+.email-to {
+    color: rgba(255,255,255,0.8);
+    font-size: 12px;
+    margin-bottom: 3px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.email-from strong,
+.email-to strong {
+    color: #60a5fa;
+}
+
+.email-subject {
+    color: rgba(255,255,255,0.95);
+    font-size: 13px;
+    margin: 6px 0 4px 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.email-subject strong {
+    color: #60a5fa;
+}
+
+.email-date {
+    color: rgba(255,255,255,0.5);
+    font-size: 11px;
+    margin-top: 4px;
+}
+
+.loading-emails,
+.no-emails,
+.error-emails {
+    color: rgba(255,255,255,0.5);
+    padding: 20px;
+    text-align: center;
+    font-size: 14px;
+}
+
+.error-emails {
+    color: #f87171;
+}
+
+/* When email panel is visible, adjust chat container */
+.app-container.email-mode .chat-container {
+    border-radius: 0;
+}
+
+/* Responsive - hide email panel on mobile */
+@media (max-width: 1024px) {
+    .email-panel {
+        position: fixed;
+        right: -320px;
+        top: 0;
+        bottom: 0;
+        z-index: 998;
+        border-radius: 12px 0 0 12px;
+        transition: right 0.3s;
+    }
+    
+    .email-panel.open {
+        right: 0;
+    }
+}
+
+/* Email Action Context Menu (Compact) */
+#emailActionModal {
+    position: absolute;
+    z-index: 1000;
+    display: none;
+    background: transparent;
+    pointer-events: none;
+}
+
+#emailActionModal .modal-content {
+    background: #1e293b;
+    border: 1px solid #334155;
+    width: 140px; /* Much smaller width */
+    padding: 6px;
+    border-radius: 8px;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.4);
+    pointer-events: auto;
+    animation: fadeIn 0.1s ease-out;
+}
+
+/* Hide header and close button for compact look */
+#emailActionModal h2, 
+#emailActionModal .close-btn {
+    display: none;
+}
+
+/* Using simple list style */
+#emailActionModal .modal-actions {
+    display: flex;
+    flex-direction: column; /* Stack vertically */
+    gap: 4px;
+    margin: 0;
+}
+
+#emailActionModal button {
+    width: 100%;
+    text-align: left;
+    padding: 8px 12px;
+    font-size: 13px;
+    border-radius: 4px;
+    border: none;
+    background: transparent;
+    cursor: pointer;
+    color: #e2e8f0;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+#emailActionModal button:hover {
+    background: rgba(255,255,255,0.05);
+}
+
+#emailActionModal .delete-btn {
+    color: #ef4444;
+}
+
+#emailActionModal .delete-btn:hover {
+    background: rgba(239, 68, 68, 0.1);
+}

@@ -49,7 +49,8 @@ document.addEventListener('DOMContentLoaded', loadConversations);
 
 async function loadConversations() {
     try {
-        const response = await fetch('/api/conversations');
+        // Filter conversations by current mode
+        const response = await fetch(`/api/conversations?mode=${chatMode}`);
         const data = await response.json();
         renderConversationList(data.conversations);
     } catch (error) {
@@ -120,15 +121,24 @@ function escapeHtml(text) {
 
 async function createNewChat() {
     try {
-        const response = await fetch('/api/conversations', { method: 'POST' });
+        // Pass current mode when creating conversation
+        const response = await fetch('/api/conversations', { 
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ mode: chatMode })
+        });
         const data = await response.json();
         
         currentConversationId = data.id;
         localStorage.setItem('current_conversation_id', data.id);
         
-        // Clear chat and reset session
+        // Clear chat and show mode-appropriate welcome
         chatMessages.innerHTML = '';
-        addMessage("Bonjour! Je suis votre assistant IA pour les documents Auchan. Comment puis-je vous aider ?", false);
+        if (chatMode === 'email') {
+            addMessage("Mode Email activé! Posez vos questions sur vos emails.", false);
+        } else {
+            addMessage("Bonjour! Je suis votre assistant IA pour les documents Auchan. Comment puis-je vous aider ?", false);
+        }
         
         // Reload sidebar
         loadConversations();
@@ -141,6 +151,13 @@ async function loadConversation(convId) {
     try {
         const response = await fetch(`/api/conversations/${convId}`);
         const data = await response.json();
+        
+        // Check conversation mode and switch if necessary
+        const targetMode = data.conversation.mode || 'document';
+        
+        if (targetMode !== chatMode) {
+            toggleChatMode();
+        }
         
         currentConversationId = convId;
         localStorage.setItem('current_conversation_id', convId);
@@ -963,3 +980,380 @@ document.addEventListener('DOMContentLoaded', () => {
         }, false);
     }
 });
+
+// ============================================================================
+// EMAIL CHAT MODE
+// ============================================================================
+
+// Chat mode: 'document' or 'email'
+let chatMode = localStorage.getItem('chat_mode') || 'document';
+
+// Initialize mode UI on page load
+document.addEventListener('DOMContentLoaded', () => {
+    updateModeUI();
+    if (chatMode === 'email') {
+        loadEmailList();
+        autoIngestEmails();
+    }
+});
+
+// Toggle between document and email chat modes
+function toggleChatMode() {
+    // Save current chat content before switching
+    saveChatState(chatMode);
+    
+    chatMode = chatMode === 'document' ? 'email' : 'document';
+    localStorage.setItem('chat_mode', chatMode);
+    
+    // Restore chat for new mode
+    restoreChatState(chatMode);
+    
+    updateModeUI(false); // false = don't reset chat
+    
+    // Reload conversations for new mode
+    loadConversations();
+    
+    // Load emails and auto-ingest if switching to email mode
+    if (chatMode === 'email') {
+        loadEmailList();
+        autoIngestEmails();
+    }
+}
+
+// Save chat state for a mode
+function saveChatState(mode) {
+    const chatContent = chatMessages.innerHTML;
+    sessionStorage.setItem(`chat_content_${mode}`, chatContent);
+}
+
+// Restore chat state for a mode
+function restoreChatState(mode) {
+    const savedContent = sessionStorage.getItem(`chat_content_${mode}`);
+    if (savedContent) {
+        chatMessages.innerHTML = savedContent;
+    } else {
+        // First time - show greeting
+        chatMessages.innerHTML = '';
+        if (mode === 'email') {
+            addMessage("📧 Mode Email activé! Posez vos questions sur vos emails.", false);
+        } else {
+            addMessage("Bonjour! Je suis votre assistant IA pour les documents Auchan. Comment puis-je vous aider ?", false);
+        }
+    }
+}
+
+// Update UI to reflect current mode
+function updateModeUI(resetChat = true) {
+    const modeLabel = document.getElementById('modeLabel');
+    const documentIcon = document.querySelector('.document-icon');
+    const emailIcon = document.querySelector('.email-icon');
+    const emailPanel = document.getElementById('emailPanel');
+    const chatTitle = document.getElementById('chatTitle');
+    const chatSubtitle = document.getElementById('chatSubtitle');
+    const uploadBtn = document.getElementById('uploadBtn');
+    
+    if (chatMode === 'email') {
+        // Email mode
+        if (modeLabel) modeLabel.textContent = 'Emails';
+        if (documentIcon) documentIcon.style.display = 'none';
+        if (emailIcon) emailIcon.style.display = 'inline';
+        if (emailPanel) emailPanel.style.display = 'flex';
+        if (chatTitle) chatTitle.textContent = '📧 Email Chat';
+        if (chatSubtitle) chatSubtitle.textContent = 'Ask questions about your emails';
+        if (uploadBtn) uploadBtn.style.display = 'none';
+        
+        // Only reset if told to
+        if (resetChat) {
+            chatMessages.innerHTML = '';
+            addMessage("📧 Mode Email activé! Posez vos questions sur vos emails.", false);
+        }
+    } else {
+        // Document mode
+        if (modeLabel) modeLabel.textContent = 'Documents';
+        if (documentIcon) documentIcon.style.display = 'inline';
+        if (emailIcon) emailIcon.style.display = 'none';
+        if (emailPanel) emailPanel.style.display = 'none';
+        if (chatTitle) chatTitle.textContent = 'RAG Chatbot';
+        if (chatSubtitle) chatSubtitle.textContent = 'Ask questions about your documents';
+        if (uploadBtn) uploadBtn.style.display = 'block';
+        
+        // Only reset if told to
+        if (resetChat) {
+            chatMessages.innerHTML = '';
+            addMessage("Bonjour! Je suis votre assistant IA pour les documents Auchan. Comment puis-je vous aider ?", false);
+        }
+    }
+}
+
+// Load email list for email panel
+async function loadEmailList() {
+    const emailList = document.getElementById('emailList');
+    if (!emailList) return;
+    
+    emailList.innerHTML = '<div class="loading-emails">Loading emails...</div>';
+    
+    try {
+        const response = await fetch('/api/emails');
+        const data = await response.json();
+        
+        if (!data.emails || data.emails.length === 0) {
+            emailList.innerHTML = '<div class="no-emails">No emails found</div>';
+            return;
+        }
+        
+        let html = '';
+        data.emails.forEach(email => {
+            // Use parsed sent_date or fallback to sent_at
+            let date = email.sent_date || '';
+            if (!date && email.sent_at) {
+                const parts = email.sent_at.split(' ');
+                date = parts.length >= 2 ? parts[1] : email.sent_at;
+            }
+            
+            // Display sender (from_name or sender_email)
+            const sender = email.from_name || email.sender_email || 'Unknown';
+            const recipient = email.to_email || '';
+            const subject = email.subject || 'No subject';
+            
+            html += `
+                <div class="email-item" onclick="viewEmail('${email.id}', event)">
+                    <div class="email-from"><strong>From:</strong> ${escapeHtml(sender)}</div>
+                    <div class="email-to"><strong>To:</strong> ${escapeHtml(recipient)}</div>
+                    <div class="email-subject"><strong>Subject:</strong> ${escapeHtml(subject)}</div>
+                    <div class="email-date">${escapeHtml(date)}</div>
+                </div>
+            `;
+        });
+        
+        emailList.innerHTML = html;
+    } catch (error) {
+        console.error('Error loading emails:', error);
+        emailList.innerHTML = '<div class="error-emails">Error loading emails</div>';
+    }
+}
+let selectedEmailId = null;
+
+function viewEmail(emailId, event) {
+    if (event) event.stopPropagation();
+    
+    // Close any already open
+    closeEmailActionModal();
+    
+    selectedEmailId = emailId;
+    const modal = document.getElementById('emailActionModal');
+    
+    // Position modal relative to clicked item
+    const emailItem = document.querySelector(`.email-item[onclick*="'${emailId}'"]`);
+    
+    if (emailItem && modal) {
+        const rect = emailItem.getBoundingClientRect();
+        
+        // Position to the RIGHT of the item
+        let left = rect.right + 8;
+        let top = rect.top;
+        
+        // Adjust if goes off bottom
+        if (top + 100 > window.innerHeight) top = window.innerHeight - 110;
+        
+        modal.style.left = `${left}px`;
+        modal.style.top = `${top}px`;
+        modal.style.display = 'block';
+    }
+}
+
+function closeEmailActionModal() {
+    const modal = document.getElementById('emailActionModal');
+    if (modal) modal.style.display = 'none';
+    selectedEmailId = null;
+}
+
+function confirmResumeEmail() {
+    if (!selectedEmailId) return;
+    
+    const question = `Résume l'email avec l'ID ${selectedEmailId}`;
+    questionInput.value = question;
+    sendMessage();
+    
+    closeEmailActionModal();
+}
+
+async function confirmDeleteEmail() {
+    if (!selectedEmailId) return;
+    
+    if (!confirm('Are you sure you want to delete this email permanently?')) return;
+    
+    const btn = document.querySelector('.delete-btn');
+    const originalText = btn.textContent;
+    btn.textContent = 'Deleting...';
+    btn.disabled = true;
+    
+    try {
+        const response = await fetch(`/api/emails/${selectedEmailId}`, {
+            method: 'DELETE'
+        });
+        
+        if (response.ok) {
+            // Remove from UI
+            const item = document.querySelector(`.email-item[onclick="viewEmail('${selectedEmailId}')"]`);
+            if (item) item.remove();
+            
+            // Success feedback
+            closeEmailActionModal();
+        } else {
+            alert('Failed to delete email');
+        }
+    } catch (error) {
+        console.error('Error deleting email:', error);
+        alert('Error deleting email');
+    } finally {
+        btn.textContent = originalText;
+        btn.disabled = false;
+    }
+}
+
+// Close modal when clicking outside
+document.addEventListener('click', function(event) {
+    const modal = document.getElementById('emailActionModal');
+    if (modal && modal.style.display === 'block') {
+        const content = modal.querySelector('.modal-content');
+        if (content && !content.contains(event.target)) {
+            closeEmailActionModal();
+        }
+    }
+});
+
+// Auto-ingest emails silently in background
+async function autoIngestEmails() {
+    console.log('📧 Auto-syncing email embeddings...');
+    
+    try {
+        const response = await fetch('/api/emails/ingest', { method: 'POST' });
+        const data = await response.json();
+        
+        if (data.successful > 0) {
+            console.log(`✅ Auto-ingested ${data.successful} emails, ${data.chunks_created} chunks`);
+        } else {
+            console.log('📧 All emails already synced');
+        }
+    } catch (error) {
+        console.error('Error auto-ingesting emails:', error);
+    }
+}
+
+// Manual ingest with UI feedback (button click)
+async function ingestEmails() {
+    const btn = document.querySelector('.email-ingest-btn');
+    if (btn) {
+        btn.textContent = '⏳';
+        btn.disabled = true;
+    }
+    
+    try {
+        const response = await fetch('/api/emails/ingest', { method: 'POST' });
+        const data = await response.json();
+        
+        alert(`✅ Sync complete!\nEmails: ${data.successful}\nChunks: ${data.chunks_created}`);
+        loadEmailList();
+    } catch (error) {
+        console.error('Error ingesting emails:', error);
+        alert('❌ Error syncing emails');
+    } finally {
+        if (btn) {
+            btn.textContent = '🔄';
+            btn.disabled = false;
+        }
+    }
+}
+
+// Override sendMessage to use correct endpoint based on mode
+const originalSendMessage = sendMessage;
+sendMessage = async function() {
+    const question = questionInput.value.trim();
+    if (!question && !attachedImage) return;
+    
+    // Add user message
+    if (attachedImage) {
+        // Same image handling as before
+        const reader = new FileReader();
+        reader.onload = function(e) {
+            const messageText = question || 'Analyze this';
+            const messageWithImage = `
+                <div class="user-message-text">${messageText}</div>
+                <img src="${e.target.result}" class="user-image-thumbnail" alt="Uploaded" />
+            `;
+            const messageDiv = document.createElement('div');
+            messageDiv.className = 'message user';
+            
+            const avatar = document.createElement('div');
+            avatar.className = 'message-avatar';
+            avatar.textContent = '👤';
+            
+            const content = document.createElement('div');
+            content.className = 'message-content';
+            content.innerHTML = messageWithImage;
+            
+            messageDiv.appendChild(content);
+            messageDiv.appendChild(avatar);
+            chatMessages.appendChild(messageDiv);
+            chatMessages.scrollTop = chatMessages.scrollHeight;
+        };
+        reader.readAsDataURL(attachedImage);
+    } else {
+        addMessage(question, true);
+    }
+    
+    questionInput.value = '';
+    resetInputHeight();
+    
+    sendButton.disabled = true;
+    questionInput.disabled = true;
+    sendButton.innerHTML = '<span class="loading">Thinking</span>';
+    
+    try {
+        const formData = new FormData();
+        formData.append('question', question || 'Analyze this');
+        formData.append('session_id', sessionId);
+        if (currentConversationId) {
+            formData.append('conversation_id', currentConversationId);
+        }
+        
+        if (attachedImage) {
+            formData.append('image', attachedImage);
+        }
+        
+        // Use different endpoint based on mode
+        const endpoint = chatMode === 'email' ? '/ask-email' : '/ask';
+        
+        if (chatMode === 'document') {
+            formData.append('method', 'mmr');
+        }
+        
+        const response = await fetch(endpoint, {
+            method: 'POST',
+            body: formData
+        });
+        
+        if (!response.ok) {
+            throw new Error(`HTTP error! status: ${response.status}`);
+        }
+        
+        const data = await response.json();
+        
+        if (data.session_id) {
+            sessionId = data.session_id;
+            sessionStorage.setItem('chat_session_id', sessionId);
+        }
+        
+        addMessage(data.answer, false, data.sources);
+        clearImagePreview();
+        
+    } catch (error) {
+        console.error('Error:', error);
+        addMessage('Désolé, une erreur est survenue. Veuillez réessayer.', false);
+    } finally {
+        sendButton.disabled = false;
+        questionInput.disabled = false;
+        sendButton.textContent = 'Send';
+        questionInput.focus();
+    }
+};

@@ -22,40 +22,54 @@ class ChatHistoryManager:
         self.supabase = create_client(supabase_url, supabase_key)
         logger.info("📜 ChatHistoryManager initialized")
     
-    def create_conversation(self, title: str = "New Chat") -> Optional[str]:
+    def create_conversation(self, title: str = "New Chat", mode: str = "document") -> Optional[str]:
         """
         Create a new conversation.
+        
+        Args:
+            title: Conversation title
+            mode: Chat mode ('document' or 'email')
         
         Returns:
             Conversation ID or None if failed
         """
         try:
             result = self.supabase.table("chat_conversations").insert({
-                "title": title
+                "title": title,
+                "mode": mode
             }).execute()
             
             if result.data:
                 conv_id = result.data[0]["id"]
-                logger.info(f"✓ Created conversation: {conv_id[:8]}...")
+                logger.info(f"✓ Created conversation: {conv_id[:8]}... (mode={mode})")
                 return conv_id
             return None
         except Exception as e:
             logger.error(f"Error creating conversation: {e}")
             return None
     
-    def list_conversations(self, limit: int = 50) -> List[Dict]:
+    def list_conversations(self, limit: int = 50, mode: Optional[str] = None) -> List[Dict]:
         """
-        Get list of all conversations, ordered by most recent.
+        Get list of conversations, ordered by most recent.
+        
+        Args:
+            limit: Maximum number of conversations to return
+            mode: Optional filter by chat mode ('document' or 'email')
         
         Returns:
-            List of conversation dicts with id, title, created_at, updated_at
+            List of conversation dicts with id, title, mode, created_at, updated_at
         """
         try:
-            result = self.supabase.table("chat_conversations")\
-                .select("id, title, created_at, updated_at")\
+            query = self.supabase.table("chat_conversations")\
+                .select("id, title, mode, created_at, updated_at")\
                 .order("updated_at", desc=True)\
-                .limit(limit)\
-                .execute()
+                .limit(limit)
+            
+            # Filter by mode if specified
+            if mode:
+                query = query.eq("mode", mode)
+            
+            result = query.execute()
             
             return result.data or []
         except Exception as e:
@@ -70,11 +84,11 @@ class ChatHistoryManager:
             Dict with conversation info and messages list
         """
         try:
-            # Get conversation
+            # Get conversation - use maybe_single to avoid error when not found
             conv_result = self.supabase.table("chat_conversations")\
                 .select("*")\
                 .eq("id", conversation_id)\
-                .single()\
+                .maybe_single()\
                 .execute()
             
             if not conv_result.data:
