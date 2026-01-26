@@ -24,7 +24,7 @@ load_dotenv()
 
 # FastAPI imports
 from fastapi import FastAPI, HTTPException, Request, UploadFile, File, Form  # type: ignore
-from fastapi.responses import HTMLResponse  # type: ignore
+from fastapi.responses import HTMLResponse, FileResponse  # type: ignore
 from fastapi.staticfiles import StaticFiles  # type: ignore
 from fastapi.templating import Jinja2Templates  # type: ignore
 from fastapi.middleware.cors import CORSMiddleware  # type: ignore
@@ -146,6 +146,12 @@ app.mount("/static", StaticFiles(directory="static"), name="static")
 
 # Setup templates
 templates = Jinja2Templates(directory="templates")
+
+
+# Favicon route (browsers request /favicon.ico at root)
+@app.get("/favicon.ico", include_in_schema=False)
+async def favicon():
+    return FileResponse("static/favicon.ico")
 
 
 # Add CORS middleware

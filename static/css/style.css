@@ -1300,12 +1300,19 @@ body {
 #emailActionModal .modal-content {
     background: #1e293b;
     border: 1px solid #334155;
-    width: 140px; /* Much smaller width */
-    padding: 6px;
+    width: auto;
+    min-width: 40px;
+    padding: 4px;
     border-radius: 8px;
     box-shadow: 0 4px 12px rgba(0,0,0,0.4);
     pointer-events: auto;
     animation: fadeIn 0.1s ease-out;
+}
+
+/* Icon-only compact style */
+#emailActionModal .modal-content.icon-only {
+    width: auto;
+    padding: 4px;
 }
 
 /* Hide header and close button for compact look */
@@ -1317,14 +1324,13 @@ body {
 /* Using simple list style */
 #emailActionModal .modal-actions {
     display: flex;
-    flex-direction: column; /* Stack vertically */
-    gap: 4px;
+    flex-direction: row;
+    gap: 0;
     margin: 0;
 }
 
 #emailActionModal button {
-    width: 100%;
-    text-align: left;
+    text-align: center;
     padding: 8px 12px;
     font-size: 13px;
     border-radius: 4px;
@@ -1334,17 +1340,30 @@ body {
     color: #e2e8f0;
     display: flex;
     align-items: center;
+    justify-content: center;
     gap: 8px;
 }
 
 #emailActionModal button:hover {
-    background: rgba(255,255,255,0.05);
+    background: rgba(255,255,255,0.1);
 }
 
-#emailActionModal .delete-btn {
-    color: #ef4444;
+/* Icon button style */
+#emailActionModal .icon-btn {
+    width: 36px;
+    height: 36px;
+    padding: 0;
+    border-radius: 6px;
+    color: #60a5fa;
 }
 
-#emailActionModal .delete-btn:hover {
-    background: rgba(239, 68, 68, 0.1);
+#emailActionModal .icon-btn:hover {
+    background: rgba(96, 165, 250, 0.15);
+    transform: scale(1.1);
 }
+
+#emailActionModal .icon-btn svg {
+    width: 18px;
+    height: 18px;
+}
+

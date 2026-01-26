@@ -1035,7 +1035,7 @@ function restoreChatState(mode) {
         // First time - show greeting
         chatMessages.innerHTML = '';
         if (mode === 'email') {
-            addMessage("📧 Mode Email activé! Posez vos questions sur vos emails.", false);
+            addMessage("Mode Email activé! Posez vos questions sur vos emails.", false);
         } else {
             addMessage("Bonjour! Je suis votre assistant IA pour les documents Auchan. Comment puis-je vous aider ?", false);
         }
@@ -1058,14 +1058,14 @@ function updateModeUI(resetChat = true) {
         if (documentIcon) documentIcon.style.display = 'none';
         if (emailIcon) emailIcon.style.display = 'inline';
         if (emailPanel) emailPanel.style.display = 'flex';
-        if (chatTitle) chatTitle.textContent = '📧 Email Chat';
+        if (chatTitle) chatTitle.textContent = 'Email Chat';
         if (chatSubtitle) chatSubtitle.textContent = 'Ask questions about your emails';
         if (uploadBtn) uploadBtn.style.display = 'none';
         
         // Only reset if told to
         if (resetChat) {
             chatMessages.innerHTML = '';
-            addMessage("📧 Mode Email activé! Posez vos questions sur vos emails.", false);
+            addMessage("Mode Email activé! Posez vos questions sur vos emails.", false);
         }
     } else {
         // Document mode
