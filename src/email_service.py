@@ -8,7 +8,7 @@ Provides methods to list, get, and prepare emails for ingestion.
 import os
 import logging
 from typing import Optional, List, Dict
-from datetime import datetime
+from datetime import datetime, timezone
 from supabase import create_client
 
 logger = logging.getLogger(__name__)
@@ -66,26 +66,50 @@ class EmailService:
     
     def list_emails(self, limit: int = 50) -> List[Dict]:
         """
-        Get list of all emails, ordered by most recent.
+        Get list of all emails, ordered by most recent (Parsed Sent Date).
         
         Returns:
             List of email dicts with parsed headers
         """
         try:
+            # Order by created_at initially to get most recently ingested
             result = self.supabase.table("email")\
                 .select("id, subject, sender_email, sent_at, content, created_at")\
-                .order("sent_at", desc=True)\
+                .order("created_at", desc=True)\
                 .limit(limit)\
                 .execute()
             
             # Parse headers from content for each email
             emails = []
+            from email.utils import parsedate_to_datetime
+            
             for email in (result.data or []):
                 parsed = self._parse_email_headers(email.get("content", ""))
                 email["from_name"] = parsed["from_name"]
                 email["to_email"] = parsed["to_email"]
                 email["sent_date"] = parsed["sent_date"]
+                
+                # Parse date for sorting
+                try:
+                    if email["sent_date"]:
+                        dt = parsedate_to_datetime(email["sent_date"])
+                        # If timezone naive, assume UTC
+                        if dt.tzinfo is None:
+                            dt = dt.replace(tzinfo=timezone.utc)
+                    else:
+                        dt = datetime.min.replace(tzinfo=timezone.utc)
+                except Exception:
+                    dt = datetime.min.replace(tzinfo=timezone.utc)
+                
+                email["_sort_date"] = dt
                 emails.append(email)
+            
+            # Sort by actual sent date descending
+            emails.sort(key=lambda x: x["_sort_date"], reverse=True)
+            
+            # Clean up temporary sort key
+            for email in emails:
+                del email["_sort_date"]
             
             return emails
         except Exception as e:

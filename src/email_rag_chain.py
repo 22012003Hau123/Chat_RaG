@@ -59,6 +59,54 @@ class EmailRAGChain:
         )
         return response.data[0].embedding
     
+    def _rewrite_query(self, question: str, history: List[Dict[str, str]]) -> str:
+        """
+        Use LLM to rewrite the question into a standalone query based on history.
+        """
+        if not history:
+            return question
+            
+        try:
+            # Prepare minimal history for context (last 2 turns + current question)
+            # Format: User: ... \n AI: ...
+            context_str = ""
+            for msg in history[-4:]: # Take last 4 messages for context
+                role = "User" if msg.get('role') == 'user' else "Assistant"
+                context_str += f"{role}: {msg.get('content', '')}\n"
+                
+            system_prompt = (
+                "You are an expert query refiner. Your task is to rewrite the latest user question "
+                "based on the chat history to make it a standalone query for a search engine.\n"
+                "Rules:\n"
+                "1. Replace pronouns (it, that, he, she, this subject) with specific names, entities, or email subjects from the history.\n"
+                "2. Be specific and detailed. Include relevant context like IDs, names of projects/people if mentioned previously.\n"
+                "3. Keep the SAME LANGUAGE as the latest user question (if user asks in French, rewrite in French).\n"
+                "4. Do NOT answer the question. Just rewrite it."
+            )
+            
+            user_prompt = f"Chat History:\n{context_str}\nLatest Question: {question}\n\nStandalone Question:"
+            
+            response = self.openai.chat.completions.create(
+                model="gpt-3.5-turbo", # Use GPT-3.5 for fast rewriting
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt}
+                ],
+                temperature=0.0,
+                max_tokens=150
+            )
+            
+            rewritten = response.choices[0].message.content.strip()
+            
+            if rewritten.lower() != question.lower():
+                logger.info(f"  ✨ Query Rewritten (LLM): '{question}' → '{rewritten}'")
+                return rewritten
+                
+        except Exception as e:
+            logger.error(f"Error rewriting query with LLM: {e}")
+            
+        return question
+    
     def retrieve(self, question: str, k: int = 5) -> List[Document]:
         """
         Retrieve relevant email chunks.
@@ -173,8 +221,11 @@ class EmailRAGChain:
                     content = msg.content if hasattr(msg, 'content') else str(msg)
                     history.append({'role': role, 'content': content})
         
+        # Rewrite query with LLM
+        rewritten_query = self._rewrite_query(question, history)
+        
         # Retrieve relevant emails
-        documents = self.retrieve(question, k=k)
+        documents = self.retrieve(rewritten_query, k=k)
         
         # Create prompt
         messages = create_email_messages(question, documents, history)

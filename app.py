@@ -416,6 +416,28 @@ async def ask_email(
     # Get or create session
     session = session_manager.get_or_create_session(session_id_str)
     
+    # CONTEXT RESTORATION: If session is new/empty but we have a conversation_id, 
+    # try to load recent history from DB to restore context.
+    if len(session.history.messages) == 0 and conversation_id:
+        try:
+            print(f"🔄 Restoring context for conversation {conversation_id}...")
+            chat_history = get_chat_history()
+            if chat_history:
+                # Get last 10 messages from DB
+                recent_msgs = chat_history.get_messages(conversation_id, limit=10)
+                if recent_msgs:
+                    # Restore to session RAM
+                    for msg in reversed(recent_msgs): # API returns newest first, we need chronological
+                        role = msg.get('role')
+                        content = msg.get('content')
+                        if role == 'user':
+                            session.history.add_user_message(content)
+                        elif role == 'assistant':
+                            session.history.add_ai_message(content)
+                    print(f"✅ Restored {len(recent_msgs)} messages to session RAM")
+        except Exception as e:
+            print(f"⚠️ Failed to restore context: {e}")
+    
     try:
         result = email_rag.query(
             question=question,
@@ -433,12 +455,15 @@ async def ask_email(
                 # Ensure conversation exists (create if missing - usually for session fallback)
                 existing = chat_history.get_conversation(target_id)
                 if not existing:
-                    title = f"📧 {chat_history.generate_title_from_message(question)}"
-                    chat_history.supabase.table("chat_conversations").insert({
-                        "id": target_id,
-                        "title": title,
-                        "mode": "email"
-                    }).execute()
+                    # Generate title using LLM
+                    title = rag_chain.generate_title(question)
+                    chat_history.create_conversation(title=f"📧 {title}", mode="email")
+                else:
+                    # Update title if it's default
+                    curr_title = existing.get('conversation', {}).get('title', '')
+                    if curr_title in ["New Chat", "Email Chat"]:
+                         new_title = rag_chain.generate_title(question)
+                         chat_history.update_title(target_id, new_title)
                 
                 # Add messages to history
                 chat_history.add_message(target_id, "user", question)
@@ -721,6 +746,28 @@ async def ask_question(
     # Get or create session
     session = session_manager.get_or_create_session(session_id_str)
     
+    # CONTEXT RESTORATION: If session is new/empty but we have a conversation_id, 
+    # try to load recent history from DB to restore context.
+    if len(session.history.messages) == 0 and conversation_id:
+        try:
+            print(f"🔄 Restoring context for conversation {conversation_id}...")
+            chat_history = get_chat_history()
+            if chat_history:
+                # Get last 10 messages from DB
+                recent_msgs = chat_history.get_messages(conversation_id, limit=10)
+                if recent_msgs:
+                    # Restore to session RAM
+                    for msg in reversed(recent_msgs):
+                        role = msg.get('role')
+                        content = msg.get('content')
+                        if role == 'user':
+                            session.history.add_user_message(content)
+                        elif role == 'assistant':
+                            session.history.add_ai_message(content)
+                    print(f"✅ Restored {len(recent_msgs)} messages to session RAM")
+        except Exception as e:
+            print(f"⚠️ Failed to restore context: {e}")
+    
     try:
         # Format question with file context
         # Important: Keep original question clear so conversation context works
@@ -751,13 +798,17 @@ Note: Utilisez l'historique de conversation pour comprendre le contexte de cette
                 target_id = conversation_id or session_id_str
                 
                 # Ensure conversation exists
-                if not chat_history.get_conversation(target_id):
-                    title = chat_history.generate_title_from_message(question)
-                    chat_history.supabase.table("chat_conversations").insert({
-                        "id": target_id,
-                        "title": title,
-                        "mode": "document"
-                    }).execute()
+                existing = chat_history.get_conversation(target_id)
+                if not existing:
+                    # Generate title using LLM
+                    title = rag_chain.generate_title(question)
+                    chat_history.create_conversation(title=title, mode="document")
+                else:
+                    # Update title if it's default
+                    curr_title = existing.get('conversation', {}).get('title', '')
+                    if curr_title in ["New Chat", "Email Chat"]:
+                         new_title = rag_chain.generate_title(question)
+                         chat_history.update_title(target_id, new_title)
                     
                 chat_history.add_message(target_id, "user", question)
                 chat_history.add_message(target_id, "assistant", result["answer"])

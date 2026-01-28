@@ -34,8 +34,12 @@ function resetSession() {
     console.log('🔄 Session reset:', sessionId);
     // Clear chat UI
     chatMessages.innerHTML = '';
-    // Re-add greeting
-    addMessage("Bonjour! Je suis votre assistant IA pour les documents Auchan. Comment puis-je vous aider ?", false);
+    // Re-add greeting based on mode
+    if (typeof chatMode !== 'undefined' && chatMode === 'email') {
+        addMessage("Mode Email activé! Posez vos questions sur vos emails.", false);
+    } else {
+        addMessage("Bonjour! Je suis votre assistant IA pour les documents Auchan. Comment puis-je vous aider ?", false);
+    }
 }
 
 // ============================================================================
@@ -142,6 +146,9 @@ async function createNewChat() {
         
         // Reload sidebar
         loadConversations();
+        
+        // Generate new Session ID for this new chat
+        resetSession();
     } catch (error) {
         console.error('Error creating conversation:', error);
     }
@@ -1132,6 +1139,7 @@ async function loadEmailList() {
     }
 }
 let selectedEmailId = null;
+let selectedEmailSubject = "";
 
 function viewEmail(emailId, event) {
     if (event) event.stopPropagation();
@@ -1144,6 +1152,10 @@ function viewEmail(emailId, event) {
     
     // Position modal relative to clicked item
     const emailItem = document.querySelector(`.email-item[onclick*="'${emailId}'"]`);
+    if (emailItem) {
+        const subjectEl = emailItem.querySelector('.email-subject');
+        if (subjectEl) selectedEmailSubject = subjectEl.textContent;
+    }
     
     if (emailItem && modal) {
         const rect = emailItem.getBoundingClientRect();
@@ -1165,12 +1177,16 @@ function closeEmailActionModal() {
     const modal = document.getElementById('emailActionModal');
     if (modal) modal.style.display = 'none';
     selectedEmailId = null;
+    selectedEmailSubject = "";
 }
 
 function confirmResumeEmail() {
     if (!selectedEmailId) return;
     
-    const question = `Résume l'email avec l'ID ${selectedEmailId}`;
+    let question = `Résume l'email avec l'ID ${selectedEmailId}`;
+    if (selectedEmailSubject) {
+        question = `Résume l'email subject: ${selectedEmailSubject} avec l'ID ${selectedEmailId}`;
+    }
     questionInput.value = question;
     sendMessage();
     

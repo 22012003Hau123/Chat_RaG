@@ -178,245 +178,85 @@ class RAGChain:
         
         return False
     
-    def _extract_topic_keywords(self, history: List[Dict[str, str]], max_words: int = 5) -> str:
+    def _rewrite_query(self, question: str, history: List[Dict[str, str]]) -> str:
         """
-        Extract main topic keywords from recent history.
-        
-        NEW APPROACH:
-        - Extract from BOTH user questions AND bot responses
-        - Prioritize proper nouns (capitalized words like "Lucid", "iPhone")
-        - Use simple NER to identify entities
-        
-        Args:
-            history: Recent conversation history
-            max_words: Maximum words to extract
-            
-        Returns:
-            Topic keywords string (entity names)
+        Use LLM to rewrite the question into a standalone query based on history.
+        Replaces manual enrichment heuristics.
         """
-        if not history or len(history) == 0:
-            return ""
-        
-        # Strategy 1: Extract proper nouns (entities) from recent bot responses
-        # Bot responses usually contain the actual entity names clearly
-        entities = []
-        
-        # Look at last 3 turns (6 messages)
-        for msg in reversed(history[-6:]):
-            content = msg.get('content', '')
-            words = content.split()
-            
-            # Extract capitalized words (proper nouns) - simple NER
-            for word in words:
-                # Clean word of punctuation
-                cleaned = word.strip('.,!?:;()[]{}"\'')
-                
-                # Check if it's a proper noun:
-                # - Starts with capital letter
-                # - Length > 2 (avoid "Le", "La", etc.)
-                # - Not common French/English/Vietnamese articles/phrases
-                # - Not common French connectors/sentence starters
-                excluded_words = [
-                    # Articles
-                    'The', 'Les', 'Une', 'Des', 'Một', 'Các', 
-                    # Prepositions
-                    'Pour', 'Dans', 'Avec', 'Sans', 'Sous', 'Sur',
-                    # Common French connectors/phrases (CRITICAL!)
-                    "D'après", "Selon", "Voici", "Voilà", "Cependant", 
-                    "Toutefois", "Néanmoins", "Ainsi", "Donc", "Ensuite",
-                    # Sentence starters
-                    "Bonjour", "Merci", "Désolé", "Pardon",
-                    # Common Vietnamese starters
-                    "Xin", "Cảm", "Chào"
-                ]
-                
-                if (cleaned and 
-                    cleaned[0].isupper() and 
-                    len(cleaned) > 2 and
-                    cleaned not in excluded_words and
-                    not cleaned.startswith("D'") and  # Filter D'après, D'autre, etc.
-                    not cleaned.startswith("L'") and  # Filter L'application, etc.
-                    not cleaned.endswith("...")):     # Filter incomplete text
-                    entities.append(cleaned)
-            
-            # Stop if we have enough entities
-            if len(entities) >= 3:
-                break
-        
-        # Remove duplicates while preserving order (most recent first)
-        seen = set()
-        unique_entities = []
-        for entity in entities:
-            if entity.lower() not in seen:
-                seen.add(entity.lower())
-                unique_entities.append(entity)
-        
-        # SMART PRIORITIZATION: Match entities with user questions
-        if unique_entities:
-            # Get recent user questions to match against
-            user_questions = []
-            for msg in reversed(history[-6:]):
-                if msg.get('role') == 'user':
-                    user_questions.append(msg.get('content', '').lower())
-                    if len(user_questions) >= 2:
-                        break
-            
-            # Find entities that appear in user questions (highest priority)
-            matched_entities = []
-            for entity in unique_entities:
-                entity_lower = entity.lower()
-                for question in user_questions:
-                    if entity_lower in question:
-                        matched_entities.append(entity)
-                        break
-            
-            # Use matched entity if found, otherwise use first extracted entity
-            if matched_entities:
-                main_entity = matched_entities[0]
-                print(f"  🎯 Extracted topic entity from history (matched with user question): '{main_entity}'")
-            else:
-                main_entity = unique_entities[0]
-                print(f"  🎯 Extracted topic entity from history: '{main_entity}'")
-            
-            return main_entity
-        
-        # Fallback: Extract from user questions (old logic)
-        user_questions = []
-        for msg in reversed(history[-6:]):
-            if msg.get('role') == 'user':
-                user_questions.append(msg.get('content', ''))
-                if len(user_questions) >= 2:
-                    break
-        
-        if not user_questions:
-            return ""
-        
-        # Take first user question and extract keywords
-        topic_question = user_questions[-1]
-        words = topic_question.split()
-        
-        # Filter stop words
-        stop_words = ['là', 'gì', 'the', 'what', 'is', 'are', 'c\'est', 'qu\'est-ce', 'quoi', 
-                      'như', 'thế', 'nào', 'how', 'why', 'when', 'where', 'về', 'của', 'cho',
-                      'et', 'de', 'à', 'un', 'une', 'le', 'la']
-        
-        keywords = [w for w in words if w.lower() not in stop_words]
-        
-        if keywords:
-            result = ' '.join(keywords[:max_words])
-            print(f"  🎯 Extracted topic keywords (fallback): '{result}'")
-            return result
-        
-        return ""
-    
-    def _is_followup_question(self, question: str) -> bool:
-        """
-        Detect if question is a follow-up (needs context enrichment).
-        
-        ENHANCED DETECTION:
-        - More follow-up patterns
-        - Check for pronouns ("it", "nó", "that")
-        - Detect vague questions without clear subject
-        
-        Args:
-            question: User question
-            
-        Returns:
-            True if follow-up, False if standalone
-        """
-        question_lower = question.lower()
-        words = question.split()
-        
-        # Follow-up indicators - EXPANDED
-        followup_patterns = [
-            # Vietnamese - image/content requests
-            'ảnh', 'hình', 'cho', 'thêm', 'nữa', 'hiển thị',
-            'xem', 'giải thích', 'chi tiết', 'cụ thể', 'minh họa',
-            # Vietnamese pronouns/demonstratives
-            'nó', 'cái đó', 'cái này', 'đó', 'này',
-            # French
-            'image', 'photo', 'montre', 'affiche', 'plus', 'autre',
-            'détail', 'expliquer', 'illustration',
-            # French pronouns
-            'ça', 'cela', 'celui', 'celle',
-            # English  
-            'image', 'show', 'display', 'more', 'another', 'details',
-            'explain', 'illustration',
-            # English pronouns
-            'it', 'this', 'that', 'them', 'those'
-        ]
-        
-        # Check if contains any follow-up pattern
-        has_pattern = any(pattern in question_lower for pattern in followup_patterns)
-        
-        # Check if question is very short (< 3 words = likely incomplete)
-        is_very_short = len(words) < 3
-        
-        # Check if question is short and vague (< 5 words, no proper nouns)
-        is_short_vague = False
-        if len(words) <= 4:
-            # No capitalized words = no clear subject
-            has_entity = any(word[0].isupper() for word in words if len(word) > 0)
-            is_short_vague = not has_entity
-        
-        # Detect questions starting with action verbs (command-like)
-        action_starters = ['cho', 'show', 'montre', 'affiche', 'display', 'give', 'tell']
-        starts_with_action = any(question_lower.startswith(verb) for verb in action_starters)
-        
-        return has_pattern or is_very_short or is_short_vague or starts_with_action
-    
-    def _enrich_query(self, question: str, history: Optional[List[Dict[str, str]]] = None) -> str:
-        """
-        Smart query enrichment:
-        - Extract topic entity from recent history
-        - ALWAYS enrich if follow-up question detected
-        - Add entity context to help retrieval
-        
-        IMPROVED STRATEGY:
-        - If follow-up detected → extract main entity from history
-        - Format as "{question} về {entity}" or "{question} {entity}"
-        - This helps retrieval find the right documents even with vague questions
-        
-        Args:
-            question: Original user question
-            history: Conversation history
-            
-        Returns:
-            Enriched query if follow-up, original otherwise
-        """
-        # No history = no enrichment
-        if not history or len(history) == 0:
+        if not history:
             return question
-        
-        # Check if this is a follow-up question
-        if not self._is_followup_question(question):
-            # Standalone question - no enrichment needed
-            print(f"  ✓ Standalone question, no enrichment needed")
-            return question
-        
-        # Extract topic entity from history
-        topic_entity = self._extract_topic_keywords(history, max_words=5)
-        
-        if topic_entity:
-            # Smart formatting based on language
-            question_lower = question.lower()
             
-            # If question already contains "về" or similar, just append
-            if any(prep in question_lower for prep in ['về', 'de', 'about', 'of']):
-                enriched = f"{question} {topic_entity}"
-            # Otherwise, add "về" for Vietnamese, nothing for others
-            elif any(vn_word in question_lower for vn_word in ['ảnh', 'hình', 'cho', 'xem']):
-                enriched = f"{question} về {topic_entity}"
-            else:
-                # Default: just append
-                enriched = f"{question} {topic_entity}"
+        try:
+            # Prepare minimal history for context (last 2 turns + current question)
+            # Format: User: ... \n AI: ...
+            context_str = ""
+            for msg in history[-4:]: # Take last 4 messages for context
+                role = "User" if msg.get('role') == 'user' else "Assistant"
+                context_str += f"{role}: {msg.get('content', '')}\n"
+                
+            system_prompt = (
+                "You are an expert query refiner. Your task is to rewrite the latest user question "
+                "based on the chat history to make it a standalone query for a search engine.\n"
+                "Rules:\n"
+                "1. Replace pronouns (it, that, he, she, this subject) with specific names, entities, or email subjects from the history.\n"
+                "2. Be specific and detailed. Include relevant context like IDs, names of projects/people if mentioned previously.\n"
+                "3. Keep the SAME LANGUAGE as the latest user question (if user asks in French, rewrite in French).\n"
+                "4. Do NOT answer the question. Just rewrite it."
+            )
             
-            print(f"  🔍 Query enriched: '{question}' → '{enriched}'")
-            return enriched
-        else:
-            print(f"  ⚠️  Follow-up detected but no topic entity found in history")
-        
+            user_prompt = f"Chat History:\n{context_str}\nLatest Question: {question}\n\nStandalone Question:"
+            
+            response = self.client.chat.completions.create(
+                model="gpt-3.5-turbo", # Use GPT-3.5 for fast rewriting
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt}
+                ],
+                temperature=0.0, # Deterministic
+                max_tokens=150
+            )
+            
+            rewritten = response.choices[0].message.content.strip()
+            
+            if rewritten.lower() != question.lower():
+                logger.info(f"  ✨ Query Rewritten (LLM): '{question}' → '{rewritten}'")
+                return rewritten
+                
+        except Exception as e:
+            logger.error(f"Error rewriting query with LLM: {e}")
+            
         return question
+
+    def generate_title(self, question: str) -> str:
+        """
+        Generate a concise 3-5 word title for the conversation based on the first question.
+        """
+        try:
+            system_prompt = (
+                "You are a helpful assistant. Generate a short, concise title (3-5 words) "
+                "summarizing the user's question. "
+                "If the question is about summarizing an email, use the subject/topic. "
+                "Do NOT use quotes. Keep it in the same language as the question."
+            )
+            
+            response = self.client.chat.completions.create(
+                model="gpt-3.5-turbo",
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": question}
+                ],
+                temperature=0.5,
+                max_tokens=20
+            )
+            
+            title = response.choices[0].message.content.strip()
+            # Remove quotes if present
+            title = title.strip('"').strip("'")
+            return title
+            
+        except Exception as e:
+            logger.error(f"Error generating title: {e}")
+            return "New Chat"
 
     def query(
         self, 
@@ -467,7 +307,7 @@ class RAGChain:
             history_for_enrichment = []
         
         # SMART ENRICHMENT: Add context if follow-up question
-        enriched_query = self._enrich_query(question, history_for_enrichment)
+        enriched_query = self._rewrite_query(question, history_for_enrichment)
         
         # Retrieval with enriched query
         print(f"\nRetrieving documents (method: {method})...")
