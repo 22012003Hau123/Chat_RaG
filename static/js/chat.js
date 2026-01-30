@@ -209,8 +209,7 @@ async function confirmDelete(convId) {
         if (convId === currentConversationId) {
             currentConversationId = null;
             localStorage.removeItem('current_conversation_id');
-            chatMessages.innerHTML = '';
-            addMessage("Bonjour! Je suis votre assistant IA pour les documents Auchan. Comment puis-je vous aider ?", false);
+            resetSession();
         }
         
         loadConversations();
@@ -423,6 +422,9 @@ async function sendMessage() {
         formData.append('question', question || 'Analyze this image');
         formData.append('method', 'mmr');
         formData.append('session_id', sessionId);
+        if (currentConversationId) {
+            formData.append('conversation_id', currentConversationId);
+        }
         
         if (attachedImage) {
             formData.append('image', attachedImage);
@@ -443,6 +445,14 @@ async function sendMessage() {
         if (data.session_id) {
             sessionId = data.session_id;
             sessionStorage.setItem('chat_session_id', sessionId);
+        }
+        
+        // Update conversation ID from response (fix for multiple chats issue)
+        if (data.conversation_id && data.conversation_id !== currentConversationId) {
+             currentConversationId = data.conversation_id;
+             localStorage.setItem('current_conversation_id', currentConversationId);
+             // Reload sidebar to show new chat title
+             loadConversations();
         }
         
         addMessage(data.answer, false, data.sources);
@@ -1187,6 +1197,8 @@ function confirmResumeEmail() {
     if (selectedEmailSubject) {
         question = `Résume l'email subject: ${selectedEmailSubject} avec l'ID ${selectedEmailId}`;
     }
+    
+    // Just send like a normal chat message
     questionInput.value = question;
     sendMessage();
     

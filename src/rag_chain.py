@@ -183,8 +183,12 @@ class RAGChain:
         Use LLM to rewrite the question into a standalone query based on history.
         Replaces manual enrichment heuristics.
         """
+
         if not history:
+            print(f"ℹ️  No history for enrichment - using original question")
             return question
+            
+        print(f"🔄 Enriching query with {len(history)} history items")
             
         try:
             # Prepare minimal history for context (last 2 turns + current question)
@@ -219,11 +223,13 @@ class RAGChain:
             rewritten = response.choices[0].message.content.strip()
             
             if rewritten.lower() != question.lower():
-                logger.info(f"  ✨ Query Rewritten (LLM): '{question}' → '{rewritten}'")
+                print(f"✨ Enrichment Result: '{question}' → '{rewritten}'")
                 return rewritten
-                
+            else:
+                 print(f"ℹ️  Enrichment kept original: '{question}'")
+                 
         except Exception as e:
-            logger.error(f"Error rewriting query with LLM: {e}")
+            print(f"⚠️ Error rewriting query with LLM: {e}")
             
         return question
 
@@ -266,7 +272,7 @@ class RAGChain:
         session: Optional['ConversationSession'] = None
     ) -> Dict[str, Any]:
         """
-        Complete RAG query: Retrieve → Compose → Generate
+        Complete RAG query: Retrieve -> Compose -> Generate
         
         Now with ConversationSummaryBufferMemory support:
         - Uses session memory for automatic conversation summarization

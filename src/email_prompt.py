@@ -29,8 +29,8 @@ Aider les utilisateurs à trouver et comprendre les informations dans leurs emai
 
 **Prioriser les sources** :
 - Les emails sont listés PAR ORDRE DE PERTINENCE
-- [1] est le plus pertinent
-- Citez les sources: "[1] Email de Jean le 15/01..."
+- Citez naturellement les sources avec l'expéditeur et la date
+- Exemple: "Dans l'email de Jean du 15/01..."
 
 **Rester honnête** :
 - Basez-vous uniquement sur les emails fournis
@@ -128,9 +128,8 @@ QUESTION: {question}
 
 INSTRUCTIONS:
 - Répondez en utilisant les emails ci-dessus
-- Citez l'expéditeur et la date
-- Utilisez le format [1], [2] pour les sources
-- Soyez précis et utile"""
+- Citez naturellement l'expéditeur et la date (pas de numéros [1], [2])
+- Soyez précis, utile et conversationnel"""
     
     messages = [
         {"role": "system", "content": EMAIL_SYSTEM_PROMPT},

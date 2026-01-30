@@ -457,7 +457,9 @@ async def ask_email(
                 if not existing:
                     # Generate title using LLM
                     title = rag_chain.generate_title(question)
-                    chat_history.create_conversation(title=f"📧 {title}", mode="email")
+                    new_id = chat_history.create_conversation(title=f"📧 {title}", mode="email")
+                    if new_id:
+                        target_id = new_id
                 else:
                     # Update title if it's default
                     curr_title = existing.get('conversation', {}).get('title', '')
@@ -471,13 +473,16 @@ async def ask_email(
                 
         except Exception as save_err:
             print(f"⚠️ Chat history save error: {save_err}")
+            # If save failed, target_id might rely on initial default
+            if 'target_id' not in locals():
+                target_id = conversation_id or session_id_str
         
         return {
             "answer": result["answer"],
             "sources": result["sources"],
             "method_used": "email_rag",
             "session_id": session_id_str,
-            "conversation_id": conversation_id or session_id_str
+            "conversation_id": locals().get('target_id', conversation_id or session_id_str)
         }
         
     except Exception as e:
@@ -802,7 +807,9 @@ Note: Utilisez l'historique de conversation pour comprendre le contexte de cette
                 if not existing:
                     # Generate title using LLM
                     title = rag_chain.generate_title(question)
-                    chat_history.create_conversation(title=title, mode="document")
+                    new_id = chat_history.create_conversation(title=title, mode="document")
+                    if new_id:
+                        target_id = new_id
                 else:
                     # Update title if it's default
                     curr_title = existing.get('conversation', {}).get('title', '')
@@ -814,13 +821,15 @@ Note: Utilisez l'historique de conversation pour comprendre le contexte de cette
                 chat_history.add_message(target_id, "assistant", result["answer"])
         except Exception as save_err:
             print(f"⚠️ Chat history save error: {save_err}")
+            if 'target_id' not in locals():
+                target_id = conversation_id or session_id_str
         
         return AnswerResponse(
             answer=result["answer"],
             sources=result["sources"],
             method_used=method,
             session_id=session_id_str,
-            conversation_id=conversation_id or session_id_str
+            conversation_id=locals().get('target_id', conversation_id or session_id_str)
         )
         
     except Exception as e:

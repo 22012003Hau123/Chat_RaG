@@ -71,6 +71,9 @@ class ChatHistoryManager:
             
             result = query.execute()
             
+            if not result:
+                return []
+            
             return result.data or []
         except Exception as e:
             logger.error(f"Error listing conversations: {e}")
@@ -91,7 +94,8 @@ class ChatHistoryManager:
                 .maybe_single()\
                 .execute()
             
-            if not conv_result.data:
+
+            if not conv_result or not conv_result.data:
                 return None
             
             # Get messages
@@ -103,7 +107,7 @@ class ChatHistoryManager:
             
             return {
                 "conversation": conv_result.data,
-                "messages": msg_result.data or []
+                "messages": msg_result.data if msg_result else []
             }
         except Exception as e:
             logger.error(f"Error getting conversation: {e}")
@@ -139,6 +143,30 @@ class ChatHistoryManager:
         except Exception as e:
             logger.error(f"Error adding message: {e}")
             return False
+    
+    def get_messages(self, conversation_id: str, limit: int = 10) -> List[Dict]:
+        """
+        Get recent messages from a conversation.
+        
+        Args:
+            conversation_id: ID of the conversation
+            limit: Maximum number of messages to return (default: 10)
+            
+        Returns:
+            List of message dicts with role and content, ordered newest first
+        """
+        try:
+            result = self.supabase.table("chat_messages")\
+                .select("role, content, created_at")\
+                .eq("conversation_id", conversation_id)\
+                .order("created_at", desc=True)\
+                .limit(limit)\
+                .execute()
+            
+            return result.data if result and result.data else []
+        except Exception as e:
+            logger.error(f"Error getting messages: {e}")
+            return []
     
     def update_title(self, conversation_id: str, title: str) -> bool:
         """Update conversation title."""

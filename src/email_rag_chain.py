@@ -64,11 +64,15 @@ class EmailRAGChain:
         Use LLM to rewrite the question into a standalone query based on history.
         """
         if not history:
+            print(f"ℹ️  No history for enrichment - using original question")
             return question
             
         try:
             # Prepare minimal history for context (last 2 turns + current question)
             # Format: User: ... \n AI: ...
+            if history:
+                print(f"🔄 Enriching query with {len(history)} history items")
+            
             context_str = ""
             for msg in history[-4:]: # Take last 4 messages for context
                 role = "User" if msg.get('role') == 'user' else "Assistant"
@@ -86,6 +90,9 @@ class EmailRAGChain:
             
             user_prompt = f"Chat History:\n{context_str}\nLatest Question: {question}\n\nStandalone Question:"
             
+            # Log the prompt being used for enrichment
+            print(f"📝 Enrichment Prompt:\n{user_prompt}")
+            
             response = self.openai.chat.completions.create(
                 model="gpt-3.5-turbo", # Use GPT-3.5 for fast rewriting
                 messages=[
@@ -98,9 +105,8 @@ class EmailRAGChain:
             
             rewritten = response.choices[0].message.content.strip()
             
-            if rewritten.lower() != question.lower():
-                logger.info(f"  ✨ Query Rewritten (LLM): '{question}' → '{rewritten}'")
-                return rewritten
+            print(f"✨ Enrichment Result: '{question}' → '{rewritten}'")
+            return rewritten
                 
         except Exception as e:
             logger.error(f"Error rewriting query with LLM: {e}")
@@ -178,8 +184,10 @@ class EmailRAGChain:
                 )
                 documents.append(doc)
                 
-                # Debug log
-                logger.debug(f"🔍 Found: {doc.metadata.get('subject')} (Sim: {doc.metadata.get('similarity')})")
+                # Debug log - print similarity for visibility
+                subj = doc.metadata.get('subject', '')[:40] if doc.metadata.get('subject') else 'N/A'
+                sim = doc.metadata.get('similarity', 0)
+                print(f"🔍 Found: {subj}... (Sim: {sim:.3f})")
             
             logger.info(f"📧 Retrieved {len(documents)} email chunks")
             return documents
@@ -249,16 +257,25 @@ class EmailRAGChain:
             logger.error(f"Error generating answer: {e}")
             answer = f"Erreur: {str(e)}"
         
-        # Format sources
+        # Format sources - only include relevant ones (similarity >= 0.4 or exact match)
         sources = []
         seen = set()
+        MIN_SIMILARITY = 0.4  # Threshold for relevance
+        
         for doc in documents:
             email_id = doc.metadata.get("email_id", "")
-            if email_id and email_id not in seen:
-                seen.add(email_id)
-                sender = doc.metadata.get("sender_email", "Inconnu")
-                subject = doc.metadata.get("subject", "")
-                sources.append(f"📧 {sender}: {subject}")
+            similarity = doc.metadata.get("similarity", 0)
+            
+            # Skip if already seen or not relevant enough
+            if email_id in seen:
+                continue
+            if similarity < MIN_SIMILARITY and similarity != 1.0:  # 1.0 = exact ID match
+                continue
+                
+            seen.add(email_id)
+            sender = doc.metadata.get("sender_email", "Inconnu")
+            subject = doc.metadata.get("subject", "")
+            sources.append(f"📧 {sender}: {subject}")
         
         return {
             "answer": answer,
