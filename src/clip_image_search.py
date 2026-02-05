@@ -104,10 +104,18 @@ class CLIPImageSearch:
             inputs = processor(images=image, return_tensors="pt").to(device)
             
             with torch.no_grad():
-                embedding = model.get_image_features(**inputs)
+                output = model.get_image_features(**inputs)
+                # Handle both old (tensor) and new (BaseModelOutputWithPooling) formats
+                if hasattr(output, 'image_embeds'):
+                    embedding = output.image_embeds
+                elif hasattr(output, 'pooler_output'):
+                    embedding = output.pooler_output
+                else:
+                    embedding = output  # Already a tensor
             
-            # Normalize embedding
-            embedding = embedding / embedding.norm(dim=-1, keepdim=True)
+            # Normalize embedding using torch.linalg.norm for compatibility
+            norm = torch.linalg.norm(embedding, dim=-1, keepdim=True)
+            embedding = embedding / norm
             return embedding.cpu().numpy().flatten()
             
         except Exception as e:

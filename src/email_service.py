@@ -81,7 +81,8 @@ class EmailService:
             
             # Parse headers from content for each email
             emails = []
-            from email.utils import parsedate_to_datetime
+            from dateutil import parser as date_parser
+            import re
             
             for email in (result.data or []):
                 parsed = self._parse_email_headers(email.get("content", ""))
@@ -92,13 +93,20 @@ class EmailService:
                 # Parse date for sorting
                 try:
                     if email["sent_date"]:
-                        dt = parsedate_to_datetime(email["sent_date"])
-                        # If timezone naive, assume UTC
+                        # Clean up the date string - remove timezone name like "(UTC+07:00) Bangkok, Hanoi, Jakarta"
+                        date_str = email["sent_date"]
+                        # Remove everything after the timezone offset in parentheses
+                        date_str = re.sub(r'\s*\(UTC[+-]\d{2}:\d{2}\).*$', '', date_str)
+                        # Use dateutil.parser which correctly handles AM/PM
+                        dt = date_parser.parse(date_str)
+                        # If timezone naive, assume UTC+7 (Bangkok timezone from the emails)
                         if dt.tzinfo is None:
-                            dt = dt.replace(tzinfo=timezone.utc)
+                            from datetime import timedelta
+                            dt = dt.replace(tzinfo=timezone(timedelta(hours=7)))
                     else:
                         dt = datetime.min.replace(tzinfo=timezone.utc)
-                except Exception:
+                except Exception as e:
+                    logger.warning(f"Failed to parse date '{email.get('sent_date', '')}': {e}")
                     dt = datetime.min.replace(tzinfo=timezone.utc)
                 
                 email["_sort_date"] = dt

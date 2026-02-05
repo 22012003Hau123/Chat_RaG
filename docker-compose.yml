@@ -4,6 +4,9 @@ services:
   rag-chat:
     build: .
     container_name: rag-chat-app
+    dns:
+      - 8.8.8.8
+      - 8.8.4.4
     ports:
       - "8000:7860"  # Map container port 7860 to host port 8000
     env_file:
